@@ -36,6 +36,11 @@ interface DataContextType {
   addRCAEvent: (input: NewRCAInput, actor: string) => RCAEvent;
   /** Verifikasi RCA. Punishment hanya diberlakukan jika status = terverifikasi_pelanggaran DAN bukan kategori eksternal. */
   verifyRCAEvent: (id: string, status: VerificationStatus, decision: string, actor: string) => void;
+  updateDriver: (
+    driverId: string,
+    patch: Partial<Pick<Driver, 'name' | 'phone' | 'licenseNumber' | 'vehiclePlate' | 'transporterId' | 'transporterName' | 'status'>>,
+    actor: string
+  ) => void;
   updateDriverStatus: (driverId: string, status: DriverStatus, actor: string) => void;
   sendNotification: (driverId: string, title: string, description: string, priority: NotificationPriority, actor: string) => void;
   setNotificationHandling: (id: string, handlingStatus: Notification['handlingStatus']) => void;
@@ -158,6 +163,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
     addAudit('UPDATE', 'drivers', driverId, `Status diubah menjadi ${status}`, actor);
   }, [shipments, rules, drivers, addAudit]);
 
+  const updateDriver = useCallback((
+    driverId: string,
+    patch: Partial<Pick<Driver, 'name' | 'phone' | 'licenseNumber' | 'vehiclePlate' | 'transporterId' | 'transporterName' | 'status'>>,
+    actor: string
+  ) => {
+    const prevDriver = drivers.find(d => d.id === driverId);
+    if (!prevDriver) return;
+    setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, ...patch } : d));
+    setShipments(prev => prev.map(s => s.driverId === driverId ? {
+      ...s,
+      driverName: patch.name ?? s.driverName,
+      vehiclePlate: patch.vehiclePlate ?? s.vehiclePlate,
+      transporterName: patch.transporterName ?? s.transporterName,
+      driverStatus: s.status !== 'completed' ? (patch.status ?? s.driverStatus) : s.driverStatus,
+    } : s));
+    setRcaEvents(prev => prev.map(e => e.driverId === driverId ? {
+      ...e,
+      driverName: patch.name ?? e.driverName,
+      vehiclePlate: patch.vehiclePlate ?? e.vehiclePlate,
+    } : e));
+    setNotifications(prev => prev.map(n => n.driverId === driverId ? {
+      ...n,
+      driverName: patch.name ?? n.driverName,
+    } : n));
+    addAudit('UPDATE', 'drivers', driverId, `Data driver diperbarui: ${Object.keys(patch).join(', ')}`, actor);
+  }, [drivers, addAudit]);
+
   const sendNotification = useCallback((driverId: string, title: string, description: string, priority: NotificationPriority, actor: string) => {
     const drv = drivers.find(d => d.id === driverId);
     setNotifications(prev => [{
@@ -197,10 +229,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(() => ({
     drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
-    notifications, auditLogs, addRCAEvent, verifyRCAEvent, updateDriverStatus, sendNotification,
+    notifications, auditLogs, addRCAEvent, verifyRCAEvent, updateDriver, updateDriverStatus, sendNotification,
     setNotificationHandling, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
   }), [drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
-    notifications, auditLogs, addRCAEvent, verifyRCAEvent, updateDriverStatus, sendNotification,
+    notifications, auditLogs, addRCAEvent, verifyRCAEvent, updateDriver, updateDriverStatus, sendNotification,
     setNotificationHandling, updateRule, adjustPoints, setDriverRewardStatus, addAudit]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

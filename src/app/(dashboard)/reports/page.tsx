@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Download, Printer } from 'lucide-react';
 import { useData } from '@/context/DataContext';
+import { useAuth } from '@/context/AuthContext';
 import { RCA_CATEGORY_LABELS, VERIFICATION_STATUS_LABELS } from '@/lib/types';
 
 type ReportKey = 'otif' | 'driver' | 'rca' | 'pelanggaran' | 'poin' | 'perjalanan';
@@ -13,6 +15,8 @@ const REPORTS: Record<ReportKey, string> = {
 
 export default function ReportsPage() {
   const { drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions } = useData();
+  const { hasRole } = useAuth();
+  const isDriver = hasRole('driver');
   const [type, setType] = useState<ReportKey>('otif');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -66,20 +70,31 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url);
   };
 
+  if (isDriver) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-6 text-center space-y-3">
+        <p className="text-gray-700 font-medium">Halaman Laporan hanya tersedia untuk Admin / Control Tower dan Supervisor.</p>
+        <Link href="/dashboard" className="inline-block bg-[#0f2b5b] text-white text-sm px-4 py-2 rounded-lg">
+          Kembali ke Dashboard Saya
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="print:hidden">
-        <h1 className="text-2xl font-bold text-gray-900">Laporan</h1>
-        <p className="text-sm text-gray-500">Unduh laporan dalam format Excel (CSV) atau PDF (Cetak → Simpan sebagai PDF).</p>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Laporan</h1>
+        <p className="text-xs sm:text-sm text-gray-500">Unduh laporan dalam format Excel (CSV) atau PDF (Cetak → Simpan sebagai PDF).</p>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-4 grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 print:hidden text-sm">
-        <select value={type} onChange={e => setType(e.target.value as ReportKey)} className="border rounded-lg px-3 py-2 col-span-2">{Object.entries(REPORTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-        <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="border rounded-lg px-3 py-2" />
-        <input type="date" value={to} onChange={e => setTo(e.target.value)} className="border rounded-lg px-3 py-2" />
-        <select value={driverId} onChange={e => setDriverId(e.target.value)} className="border rounded-lg px-3 py-2"><option value="">Semua Driver</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
-        <select value={mitra} onChange={e => setMitra(e.target.value)} className="border rounded-lg px-3 py-2"><option value="">Semua Mitra</option>{mitraList.map(m => <option key={m}>{m}</option>)}</select>
-        <select value={cat} onChange={e => setCat(e.target.value)} className="border rounded-lg px-3 py-2"><option value="">Semua Kategori</option>{Object.entries(RCA_CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+      <div className="bg-white rounded-xl border border-gray-200 p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 print:hidden text-sm">
+        <select value={type} onChange={e => setType(e.target.value as ReportKey)} className="border rounded-lg px-3 py-2 sm:col-span-2 bg-white">{Object.entries(REPORTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+        <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="border rounded-lg px-3 py-2 bg-white" />
+        <input type="date" value={to} onChange={e => setTo(e.target.value)} className="border rounded-lg px-3 py-2 bg-white" />
+        <select value={driverId} onChange={e => setDriverId(e.target.value)} className="border rounded-lg px-3 py-2 bg-white"><option value="">Semua Driver</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
+        <select value={mitra} onChange={e => setMitra(e.target.value)} className="border rounded-lg px-3 py-2 bg-white"><option value="">Semua Mitra</option>{mitraList.map(m => <option key={m}>{m}</option>)}</select>
+        <select value={cat} onChange={e => setCat(e.target.value)} className="border rounded-lg px-3 py-2 bg-white"><option value="">Semua Kategori</option>{Object.entries(RCA_CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
       </div>
 
       <div className="flex gap-2 print:hidden">

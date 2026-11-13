@@ -1,14 +1,18 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Trophy } from 'lucide-react';
 import { useData } from '@/context/DataContext';
+import { useAuth } from '@/context/AuthContext';
 import { sortDriversByScore, scorePerDelivery } from '@/lib/scoring';
 
 const PERIOD_FACTOR: Record<string, number> = { harian: 1 / 30, mingguan: 7 / 30, bulanan: 1 };
 
 export default function LeaderboardPage() {
   const { drivers } = useData();
+  const { user, hasRole } = useAuth();
+  const isDriver = hasRole('driver');
   const [period, setPeriod] = useState('bulanan');
   const [mitra, setMitra] = useState('');
   const mitraList = Array.from(new Set(drivers.map(d => d.transporterName)));
@@ -34,14 +38,51 @@ export default function LeaderboardPage() {
   const medals = ['bg-gray-300', 'bg-yellow-400', 'bg-amber-600'];
   const initials = (n: string) => n.split(' ').map(x => x[0]).join('').slice(0, 2);
 
+  if (isDriver) {
+    const myRankIndex = ranked.findIndex(d => d.id === user?.driverId);
+    const me = myRankIndex >= 0 ? ranked[myRankIndex] : null;
+    return (
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Peringkat &amp; Skor Saya</h1>
+          <p className="text-xs sm:text-sm text-gray-500">Menampilkan pencapaian poin pribadi Anda.</p>
+        </div>
+        {me ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs text-gray-500">Peringkat Anda ({period})</p>
+                <p className="text-2xl font-bold text-[#0f2b5b]">#{myRankIndex + 1} dari {ranked.length} Driver</p>
+              </div>
+              <Trophy className="text-amber-500 shrink-0" size={32} />
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+              <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-500 block">Total Kirim</span><b>{me.totalDeliveries}</b></div>
+              <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-500 block">% Tepat Waktu</span><b>{me.onTimePercentage}%</b></div>
+              <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-500 block">Skor Akhir</span><b>{me.finalScore}</b></div>
+              <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-500 block">Skor / Kirim</span><b>{scorePerDelivery(me)}</b></div>
+            </div>
+            <Link href="/dashboard" className="inline-block text-xs font-medium text-blue-600 hover:underline">
+              Kembali ke Dashboard Saya
+            </Link>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 p-6 text-center text-gray-500 text-sm">
+            Data peringkat belum tersedia.
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Driver Leaderboard</h1>
-          <p className="text-sm text-gray-500">Skor Akhir = Total Reward − Total Punishment. Diperbarui otomatis setelah verifikasi.</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Driver Leaderboard</h1>
+          <p className="text-xs sm:text-sm text-gray-500">Skor Akhir = Total Reward − Total Punishment. Diperbarui otomatis setelah verifikasi.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <select value={period} onChange={e => setPeriod(e.target.value)} className="border rounded-lg px-3 py-2 text-sm bg-white">
             <option value="harian">Harian</option><option value="mingguan">Mingguan</option><option value="bulanan">Bulanan</option>
           </select>
@@ -51,13 +92,13 @@ export default function LeaderboardPage() {
         </div>
       </div>
 
-      <div className="bg-gradient-to-b from-[#0f2b5b] to-[#1e3a6e] rounded-xl p-6">
-        <div className="flex items-end justify-center gap-4">
+      <div className="bg-gradient-to-b from-[#0f2b5b] to-[#1e3a6e] rounded-xl p-4 sm:p-6">
+        <div className="flex items-end justify-center gap-2 sm:gap-4">
           {podium.map(d => {
             const rank = ranked.indexOf(d) + 1;
             const idx = rank === 1 ? 1 : rank === 2 ? 0 : 2;
             return (
-              <div key={d.id} className="flex flex-col items-center w-28 sm:w-36">
+              <div key={d.id} className="flex flex-col items-center w-24 sm:w-36">
                 {rank === 1 && <Trophy className="text-yellow-400 mb-1" size={28} />}
                 <div className="w-14 h-14 rounded-full bg-blue-400/30 text-white flex items-center justify-center font-bold text-lg">{initials(d.name)}</div>
                 <p className="text-white text-xs sm:text-sm font-semibold mt-1 text-center">{d.name}</p>
