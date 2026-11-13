@@ -50,6 +50,8 @@ export const mockDrivers: Driver[] = [
     status: 'dalam_perjalanan', totalDeliveries: 150, onTimeDeliveries: 138, lateDeliveries: 12,
     onTimePercentage: 92.0, totalRewardPoints: 1380, totalPunishmentPoints: 96, finalScore: 1284,
     validViolations: 3, joinDate: '2023-01-15',
+    gps: { lat: -7.1636, lng: 112.5678, locationName: 'Rest Area KM 30 Tol Gresik–Surabaya', speedKmh: 0, stoppedMinutes: 135, lastUpdated: '2024-11-10T10:30:00', heading: 'Timur' },
+    cctv: { cameraId: 'CAM-V001', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:30:00' },
   },
   {
     id: 'D002', name: 'Hendra Wijaya', phone: '081234567891', licenseNumber: 'SIM-A-12346',
@@ -57,6 +59,8 @@ export const mockDrivers: Driver[] = [
     status: 'proses_bongkar_muat', totalDeliveries: 130, onTimeDeliveries: 125, lateDeliveries: 5,
     onTimePercentage: 96.2, totalRewardPoints: 1250, totalPunishmentPoints: 40, finalScore: 1210,
     validViolations: 1, joinDate: '2023-02-01',
+    gps: { lat: -7.9666, lng: 112.6326, locationName: 'Gudang Distribusi Malang', speedKmh: 0, stoppedMinutes: 45, lastUpdated: '2024-11-10T10:28:00', heading: 'Selatan' },
+    cctv: { cameraId: 'CAM-V002', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:28:00' },
   },
   {
     id: 'D003', name: 'Agus Setiawan', phone: '081234567892', licenseNumber: 'SIM-A-12347',
@@ -64,6 +68,8 @@ export const mockDrivers: Driver[] = [
     status: 'selesai_pengiriman', totalDeliveries: 175, onTimeDeliveries: 168, lateDeliveries: 7,
     onTimePercentage: 96.0, totalRewardPoints: 1680, totalPunishmentPoints: 56, finalScore: 1624,
     validViolations: 2, joinDate: '2022-06-15',
+    gps: { lat: -7.8480, lng: 112.0178, locationName: 'Gudang Semen Kediri', speedKmh: 0, stoppedMinutes: 15, lastUpdated: '2024-11-10T10:20:00', heading: 'Barat' },
+    cctv: { cameraId: 'CAM-V003', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:20:00' },
   },
   {
     id: 'D004', name: 'Slamet Raharjo', phone: '081234567893', licenseNumber: 'SIM-A-12348',
@@ -71,6 +77,8 @@ export const mockDrivers: Driver[] = [
     status: 'istirahat', totalDeliveries: 95, onTimeDeliveries: 80, lateDeliveries: 15,
     onTimePercentage: 84.2, totalRewardPoints: 800, totalPunishmentPoints: 120, finalScore: 680,
     validViolations: 5, joinDate: '2023-06-01',
+    gps: { lat: -7.6453, lng: 112.9075, locationName: 'Rest Area Pasuruan KM 45', speedKmh: 0, stoppedMinutes: 145, lastUpdated: '2024-11-10T10:29:00', heading: 'Timur' },
+    cctv: { cameraId: 'CAM-V004', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'offline', lastSnapshotTime: '2024-11-10T10:29:00' },
   },
   {
     id: 'D005', name: 'Dedi Kurniawan', phone: '081234567894', licenseNumber: 'SIM-A-12349',
@@ -78,6 +86,8 @@ export const mockDrivers: Driver[] = [
     status: 'dalam_perjalanan', totalDeliveries: 200, onTimeDeliveries: 190, lateDeliveries: 10,
     onTimePercentage: 95.0, totalRewardPoints: 1900, totalPunishmentPoints: 80, finalScore: 1820,
     validViolations: 2, joinDate: '2022-03-01',
+    gps: { lat: -6.7520, lng: 111.0385, locationName: 'Jalur Pantura Pati–Semarang', speedKmh: 64, stoppedMinutes: 0, lastUpdated: '2024-11-10T10:30:00', heading: 'Barat' },
+    cctv: { cameraId: 'CAM-V005', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:30:00' },
   },
   {
     id: 'D006', name: 'Wahyu Hidayat', phone: '081234567895', licenseNumber: 'SIM-A-12350',
@@ -85,6 +95,8 @@ export const mockDrivers: Driver[] = [
     status: 'antre_bbm', totalDeliveries: 110, onTimeDeliveries: 98, lateDeliveries: 12,
     onTimePercentage: 89.1, totalRewardPoints: 980, totalPunishmentPoints: 96, finalScore: 884,
     validViolations: 4, joinDate: '2023-04-01',
+    gps: { lat: -6.8976, lng: 112.0649, locationName: 'SPBU 44.571.10 Tuban', speedKmh: 0, stoppedMinutes: 45, lastUpdated: '2024-11-10T10:25:00', heading: 'Selatan' },
+    cctv: { cameraId: 'CAM-V006', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:25:00' },
   },
   {
     id: 'D007', name: 'Eko Prasetyo', phone: '081234567896', licenseNumber: 'SIM-A-12351',
@@ -92,6 +104,8 @@ export const mockDrivers: Driver[] = [
     status: 'menunggu_gudang', totalDeliveries: 160, onTimeDeliveries: 152, lateDeliveries: 8,
     onTimePercentage: 95.0, totalRewardPoints: 1520, totalPunishmentPoints: 64, finalScore: 1456,
     validViolations: 2, joinDate: '2022-09-01',
+    gps: { lat: -8.0955, lng: 112.1609, locationName: 'Area Parkir Gudang Blitar', speedKmh: 0, stoppedMinutes: 55, lastUpdated: '2024-11-10T10:26:00', heading: 'Timur' },
+    cctv: { cameraId: 'CAM-V007', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:26:00' },
   },
   {
     id: 'D008', name: 'Joko Susanto', phone: '081234567897', licenseNumber: 'SIM-A-12352',
@@ -99,6 +113,8 @@ export const mockDrivers: Driver[] = [
     status: 'kendala_operasional', totalDeliveries: 85, onTimeDeliveries: 70, lateDeliveries: 15,
     onTimePercentage: 82.4, totalRewardPoints: 700, totalPunishmentPoints: 120, finalScore: 580,
     validViolations: 6, joinDate: '2023-08-01',
+    gps: { lat: -7.5582, lng: 112.6956, locationName: 'Tol Surabaya–Gempol KM 23', speedKmh: 0, stoppedMinutes: 110, lastUpdated: '2024-11-10T10:29:00', heading: 'Selatan' },
+    cctv: { cameraId: 'CAM-V008', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:29:00' },
   },
   {
     id: 'D009', name: 'Bambang Suryadi', phone: '081234567898', licenseNumber: 'SIM-A-12353',
@@ -106,6 +122,8 @@ export const mockDrivers: Driver[] = [
     status: 'persiapan_pengiriman', totalDeliveries: 140, onTimeDeliveries: 130, lateDeliveries: 10,
     onTimePercentage: 92.9, totalRewardPoints: 1300, totalPunishmentPoints: 80, finalScore: 1220,
     validViolations: 3, joinDate: '2022-12-01',
+    gps: { lat: -6.8650, lng: 111.9580, locationName: 'Loading Dock Pabrik Tuban', speedKmh: 0, stoppedMinutes: 20, lastUpdated: '2024-11-10T10:27:00', heading: 'Timur' },
+    cctv: { cameraId: 'CAM-V009', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:27:00' },
   },
   {
     id: 'D010', name: 'Indra Permana', phone: '081234567899', licenseNumber: 'SIM-A-12354',
@@ -113,6 +131,8 @@ export const mockDrivers: Driver[] = [
     status: 'dalam_perjalanan', totalDeliveries: 120, onTimeDeliveries: 115, lateDeliveries: 5,
     onTimePercentage: 95.8, totalRewardPoints: 1150, totalPunishmentPoints: 40, finalScore: 1110,
     validViolations: 1, joinDate: '2023-03-01',
+    gps: { lat: -7.5400, lng: 111.6500, locationName: 'Tol Caruban–Madiun KM 602', speedKmh: 62, stoppedMinutes: 0, lastUpdated: '2024-11-10T10:30:00', heading: 'Barat' },
+    cctv: { cameraId: 'CAM-V010', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:30:00' },
   },
   {
     id: 'D011', name: 'Fajar Nugroho', phone: '081234567800', licenseNumber: 'SIM-A-12355',
@@ -120,6 +140,8 @@ export const mockDrivers: Driver[] = [
     status: 'rilisan', totalDeliveries: 90, onTimeDeliveries: 82, lateDeliveries: 8,
     onTimePercentage: 91.1, totalRewardPoints: 820, totalPunishmentPoints: 64, finalScore: 756,
     validViolations: 2, joinDate: '2023-09-01',
+    gps: { lat: -7.1150, lng: 112.4180, locationName: 'Gudang Semen Lamongan', speedKmh: 0, stoppedMinutes: 90, lastUpdated: '2024-11-10T10:25:00', heading: 'Timur' },
+    cctv: { cameraId: 'CAM-V011', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:25:00' },
   },
   {
     id: 'D012', name: 'Gunawan Wibowo', phone: '081234567801', licenseNumber: 'SIM-A-12356',
@@ -127,6 +149,8 @@ export const mockDrivers: Driver[] = [
     status: 'dalam_perjalanan', totalDeliveries: 180, onTimeDeliveries: 175, lateDeliveries: 5,
     onTimePercentage: 97.2, totalRewardPoints: 1750, totalPunishmentPoints: 40, finalScore: 1710,
     validViolations: 1, joinDate: '2022-01-15',
+    gps: { lat: -7.4722, lng: 112.4336, locationName: 'Tol Jombang–Mojokerto KM 685', speedKmh: 66, stoppedMinutes: 0, lastUpdated: '2024-11-10T10:30:00', heading: 'Timur' },
+    cctv: { cameraId: 'CAM-V012', cabinStatus: 'online', dashcamStatus: 'online', cargoStatus: 'online', lastSnapshotTime: '2024-11-10T10:30:00' },
   },
 ];
 
@@ -374,9 +398,11 @@ export const mockNotifications: Notification[] = [
   },
   {
     id: 'N007', driverId: 'D001', driverName: 'Rizal Firmansyah', type: 'long_stop',
-    title: 'Driver Berhenti Terlalu Lama', description: 'Driver terdeteksi berhenti lebih dari 1 jam tanpa update status.',
-    location: 'Rest Area KM 30 Tol', priority: 'warning', handlingStatus: 'belum_ditangani',
+    title: 'Berhenti Lama (> 2 Jam) — Wajib Isi RCA',
+    description: 'Armada terdeteksi berhenti 2 jam 15 menit (135 menit) di Rest Area KM 30 Tol Gresik–Surabaya. Wajib segera mengisi RCA agar tidak terkena pengurangan poin otomatis.',
+    location: 'Rest Area KM 30 Tol Gresik–Surabaya', priority: 'critical', handlingStatus: 'belum_ditangani',
     timestamp: '2024-11-10T10:30:00',
+    requiresRca: true, stoppedDurationMinutes: 135, rcaSubmitted: false, autoPunished: false,
   },
   {
     id: 'N008', driverId: 'D005', driverName: 'Dedi Kurniawan', type: 'late_arrival',

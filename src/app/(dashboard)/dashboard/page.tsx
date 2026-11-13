@@ -71,6 +71,9 @@ function DriverDashboardView() {
   const myNotifs = notifications
     .filter(n => n.driverId === user?.driverId)
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  const pendingRcaAlert = myNotifs.find(
+    n => n.requiresRca && !n.rcaSubmitted && !n.autoPunished
+  );
   const myPointTx = [
     ...rewardTransactions.filter(t => t.driverId === user?.driverId),
     ...punishmentTransactions.filter(t => t.driverId === user?.driverId),
@@ -89,6 +92,25 @@ function DriverDashboardView() {
 
   return (
     <div className="space-y-5">
+      {/* Urgent > 2 jam stop alert for Driver */}
+      {pendingRcaAlert && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={22} className="text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-red-800">{pendingRcaAlert.title}</p>
+              <p className="text-xs text-red-700 mt-0.5 leading-relaxed">{pendingRcaAlert.description}</p>
+            </div>
+          </div>
+          <Link
+            href={`/rca?notificationId=${pendingRcaAlert.id}`}
+            className="inline-flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-xl shrink-0"
+          >
+            <ClipboardList size={16} /> Isi RCA Sekarang
+          </Link>
+        </div>
+      )}
+
       {/* Header & Status */}
       <div className="bg-gradient-to-r from-[#0f2b5b] to-[#1a3d7a] rounded-2xl p-4 sm:p-6 text-white">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -163,6 +185,32 @@ function DriverDashboardView() {
           tone={driver.validViolations > 2 ? 'red' : 'amber'}
         />
       </div>
+
+      {/* My GPS Position */}
+      {driver.gps && (
+        <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
+              <MapPin size={20} />
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">Posisi GPS Armada Saya</p>
+              <p className="text-sm font-semibold text-gray-900">{driver.gps.locationName}</p>
+              <p className="text-xs text-gray-500 mt-0.5 font-mono">
+                {driver.gps.lat.toFixed(4)}, {driver.gps.lng.toFixed(4)} · {driver.gps.speedKmh} km/jam · Berhenti {driver.gps.stoppedMinutes} menit
+              </p>
+            </div>
+          </div>
+          <a
+            href={`https://www.google.com/maps?q=${driver.gps.lat},${driver.gps.lng}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-3.5 py-2 rounded-lg text-center shrink-0"
+          >
+            Lihat di Peta
+          </a>
+        </section>
+      )}
 
       {/* My Shipments */}
       <section className="bg-white rounded-xl border border-gray-200 p-4">

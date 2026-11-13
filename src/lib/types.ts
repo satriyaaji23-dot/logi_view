@@ -15,6 +15,24 @@ export interface User {
   createdAt: string;
 }
 
+export interface GPSPosition {
+  lat: number;
+  lng: number;
+  locationName: string;
+  speedKmh: number;
+  stoppedMinutes: number;
+  lastUpdated: string;
+  heading?: string;
+}
+
+export interface ArmadaCCTV {
+  cameraId: string;
+  cabinStatus: 'online' | 'offline';
+  dashcamStatus: 'online' | 'offline';
+  cargoStatus: 'online' | 'offline';
+  lastSnapshotTime: string;
+}
+
 export interface Driver {
   id: string;
   name: string;
@@ -35,6 +53,8 @@ export interface Driver {
   finalScore: number;
   validViolations: number;
   joinDate: string;
+  gps?: GPSPosition;
+  cctv?: ArmadaCCTV;
 }
 
 export type DriverStatus =
@@ -199,6 +219,7 @@ export interface RCAEvent {
   verifiedAt?: string;
   isExternalCause: boolean;
   pointsDeducted?: number;
+  notificationId?: string;
   createdAt: string;
 }
 
@@ -222,6 +243,12 @@ export interface Notification {
   timestamp: string;
   readAt?: string;
   respondedAt?: string;
+  requiresRca?: boolean;
+  stoppedDurationMinutes?: number;
+  rcaDeadlineAt?: string;
+  rcaSubmitted?: boolean;
+  rcaEventId?: string;
+  autoPunished?: boolean;
 }
 
 export const NOTIFICATION_PRIORITY_LABELS: Record<NotificationPriority, string> = {
