@@ -51,6 +51,8 @@ interface DataContextType {
   markNotificationRead: (id: string) => void;
   /** Simulasi / deteksi GPS driver berhenti > 2 jam: otomatis kirim notifikasi wajib isi RCA ke driver. */
   simulateLongStop: (driverId: string, stoppedMinutes: number, actor: string, locationOverride?: string) => void;
+  /** Sinkronkan posisi GPS dari API eksternal dan picu notifikasi otomatis bila berhenti > threshold. */
+  syncGpsLocations: (items: Array<Record<string, unknown>>, actor: string, thresholdMinutes?: number) => number;
   /** Terapkan punishment otomatis bila driver melewati batas waktu dan belum mengisi RCA. */
   triggerAutoPunishment: (notificationId: string, actor?: string) => void;
   updateRule: (id: string, patch: Partial<RewardRule>, actor: string) => void;
@@ -308,6 +310,80 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }, [drivers, notifications, addAudit]);
 
+  const syncGpsLocations = useCallback((
+    items: Array<Record<string, unknown>>,
+    actor: string,
+    thresholdMinutes = LONG_STOP_THRESHOLD_MINUTES
+  ): number => {
+    if (!items.length) return 0;
+    const nowIso = new Date().toISOString();
+    const deadlineIso = new Date(Date.now() + RCA_DEADLINE_MS).toISOString();
+    let updatedCount = 0;
+    const newAlerts: Notification[] = [];
+
+    setDrivers(prev =>
+      prev.map(d => {
+        const match = items.find(it => {
+          const idMatch = String(it.driverId ?? it.driver_id ?? '') === d.id;
+          const plateMatch =
+            String(it.vehiclePlate ?? it.plate ?? it.nopol ?? '').toLowerCase() === d.vehiclePlate.toLowerCase();
+          return idMatch || plateMatch;
+        });
+        if (!match) return d;
+        updatedCount += 1;
+        const lat = Number(match.lat ?? match.latitude ?? d.gps?.lat ?? -7.2575);
+        const lng = Number(match.lng ?? match.longitude ?? d.gps?.lng ?? 112.7521);
+        const speedKmh = Number(match.speedKmh ?? match.speed ?? 0);
+        const stoppedMinutes = Number(match.stoppedMinutes ?? match.stopped_minutes ?? 0);
+        const locationName = String(match.locationName ?? match.location ?? match.address ?? d.gps?.locationName ?? '-');
+
+        if (stoppedMinutes > thresholdMinutes) {
+          const hasActive = notifications.some(
+            n => n.driverId === d.id && n.type === 'long_stop' && n.requiresRca && !n.rcaSubmitted && !n.autoPunished
+          );
+          if (!hasActive) {
+            newAlerts.push({
+              id: nid('N'),
+              driverId: d.id,
+              driverName: d.name,
+              type: 'long_stop',
+              title: 'Berhenti Lama (> 2 Jam) — Wajib Isi RCA',
+              description: `GPS API mendeteksi armada ${d.vehiclePlate} berhenti ${formatMinutesLabel(stoppedMinutes)} (${stoppedMinutes} menit) di ${locationName}. Segera isi RCA.`,
+              location: locationName,
+              priority: 'critical',
+              handlingStatus: 'belum_ditangani',
+              timestamp: nowIso,
+              requiresRca: true,
+              stoppedDurationMinutes: stoppedMinutes,
+              rcaDeadlineAt: deadlineIso,
+              rcaSubmitted: false,
+              autoPunished: false,
+            });
+          }
+        }
+
+        return {
+          ...d,
+          gps: {
+            lat: Number.isFinite(lat) ? lat : d.gps?.lat ?? -7.2575,
+            lng: Number.isFinite(lng) ? lng : d.gps?.lng ?? 112.7521,
+            locationName,
+            speedKmh: Number.isFinite(speedKmh) ? speedKmh : 0,
+            stoppedMinutes: Number.isFinite(stoppedMinutes) ? stoppedMinutes : 0,
+            lastUpdated: nowIso,
+            heading: d.gps?.heading ?? 'Timur',
+          },
+        };
+      })
+    );
+
+    if (newAlerts.length) {
+      setNotifications(prev => [...newAlerts, ...prev]);
+    }
+    addAudit('GPS_SYNC', 'drivers', 'fleet', `Sinkronisasi GPS API (${updatedCount} armada diperbarui)`, actor);
+    return updatedCount;
+  }, [notifications, addAudit]);
+
   const addRCAEvent = useCallback((input: NewRCAInput, actor: string): RCAEvent => {
     const driver = drivers.find(d => d.id === input.driverId);
     const matchedNotif =
@@ -560,12 +636,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({
     drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
     notifications, auditLogs, addRCAEvent, verifyRCAEvent, updateDriver, updateDriverStatus,
-    sendNotification, setNotificationHandling, markNotificationRead, simulateLongStop,
+    sendNotification, setNotificationHandling, markNotificationRead, simulateLongStop, syncGpsLocations,
     triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
   }), [
     drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
     notifications, auditLogs, addRCAEvent, verifyRCAEvent, updateDriver, updateDriverStatus,
-    sendNotification, setNotificationHandling, markNotificationRead, simulateLongStop,
+    sendNotification, setNotificationHandling, markNotificationRead, simulateLongStop, syncGpsLocations,
     triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
   ]);
 

@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { Video, X, Camera, MapPin, AlertTriangle, Send, Wifi, WifiOff } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Video, X, Camera, MapPin, AlertTriangle, Send, Wifi, WifiOff, RefreshCw, Settings } from 'lucide-react';
 import { DRIVER_STATUS_LABELS, type Driver } from '@/lib/types';
+import { loadIntegrationSettings } from '@/lib/integrations';
 
 interface ArmadaCctvModalProps {
   driver: Driver | null;
@@ -28,6 +30,14 @@ export default function ArmadaCctvModal({
   const [activeChannel, setActiveChannel] = useState<ChannelKey>('cabin');
   const [clock, setClock] = useState<string>('');
   const [snapshotNotice, setSnapshotNotice] = useState<string>('');
+  const [apiState, setApiState] = useState<{
+    loading: boolean;
+    configured: boolean;
+    hasToken: boolean;
+    streamUrl?: string;
+    snapshotUrl?: string;
+    message?: string;
+  }>({ loading: false, configured: false, hasToken: false });
 
   useEffect(() => {
     const updateClock = () => {
@@ -37,6 +47,53 @@ export default function ArmadaCctvModal({
     const timer = setInterval(updateClock, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const fetchCctvFeed = useCallback(async (targetDriver: Driver, channel: ChannelKey) => {
+    const cfg = loadIntegrationSettings().cctv;
+    if (!cfg.enabled) {
+      setApiState({ loading: false, configured: false, hasToken: false, message: 'Integrasi CCTV dinonaktifkan di Pengaturan.' });
+      return;
+    }
+
+    setApiState(prev => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch('/api/integrations/cctv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpointUrl: cfg.baseUrl,
+          token: cfg.token,
+          authHeader: cfg.authHeader,
+          authPrefix: cfg.authPrefix,
+          cameraId: targetDriver.cctv?.cameraId ?? targetDriver.vehicleId,
+          vehiclePlate: targetDriver.vehiclePlate,
+          driverId: targetDriver.id,
+          channel,
+        }),
+      });
+      const json = await res.json();
+      setApiState({
+        loading: false,
+        configured: Boolean(json.configured),
+        hasToken: Boolean(json.hasToken || cfg.token),
+        streamUrl: json.streamUrl,
+        snapshotUrl: json.snapshotUrl,
+        message: json.message,
+      });
+    } catch {
+      setApiState({
+        loading: false,
+        configured: false,
+        hasToken: false,
+        message: 'Gagal memeriksa API CCTV.',
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!driver) return;
+    fetchCctvFeed(driver, activeChannel);
+  }, [driver, activeChannel, fetchCctvFeed]);
 
   if (!driver) return null;
 
@@ -51,6 +108,7 @@ export default function ArmadaCctvModal({
   const isOnline = channelStatus === 'online';
   const isMoving = (driver.gps?.speedKmh ?? 0) > 0;
   const isLongStop = (driver.gps?.stoppedMinutes ?? 0) > 120;
+  const isVideoStream = Boolean(apiState.streamUrl && /\.(mp4|webm|m3u8)(\?|$)/i.test(apiState.streamUrl));
 
   const handleSnapshot = () => {
     onCaptureSnapshot?.(driver, channelMeta.label);
@@ -79,12 +137,45 @@ export default function ArmadaCctvModal({
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10" aria-label="Tutup CCTV">
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => fetchCctvFeed(driver, activeChannel)}
+              className="p-1.5 rounded-lg hover:bg-white/10"
+              title="Muat ulang stream CCTV API"
+              aria-label="Muat ulang CCTV"
+            >
+              <RefreshCw size={16} className={apiState.loading ? 'animate-spin' : ''} />
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10" aria-label="Tutup CCTV">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="p-4 sm:p-5 space-y-4 overflow-y-auto">
+          {/* API Integration Status Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs">
+            <div className="text-slate-600 min-w-0">
+              {apiState.streamUrl || apiState.snapshotUrl ? (
+                <span className="text-emerald-700 font-semibold">Terhubung ke API CCTV Live</span>
+              ) : apiState.hasToken ? (
+                <span>
+                  <b className="text-blue-700">Token API CCTV aktif di server</b> ·{' '}
+                  <span className="text-slate-500">Isi Endpoint URL CCTV agar stream live tampil otomatis.</span>
+                </span>
+              ) : (
+                <span>Mode pratinjau simulasi · Atur Endpoint &amp; Token API CCTV di Pengaturan.</span>
+              )}
+            </div>
+            <Link
+              href="/settings"
+              className="inline-flex items-center gap-1 text-blue-700 hover:underline font-medium shrink-0"
+            >
+              <Settings size={13} /> Atur API
+            </Link>
+          </div>
+
           {/* Channel Switcher */}
           <div className="grid grid-cols-3 gap-2">
             {CHANNELS.map(ch => {
@@ -115,11 +206,26 @@ export default function ArmadaCctvModal({
             })}
           </div>
 
-          {/* Simulated Live CCTV Viewport */}
+          {/* Live API Stream or Simulated CCTV Viewport */}
           <div className="relative aspect-video rounded-xl overflow-hidden bg-slate-950 border border-slate-800 text-white">
-            {isOnline ? (
+            {apiState.snapshotUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={apiState.snapshotUrl}
+                alt={`CCTV ${driver.vehiclePlate}`}
+                className="w-full h-full object-cover"
+              />
+            ) : apiState.streamUrl && isVideoStream ? (
+              <video src={apiState.streamUrl} controls autoPlay muted className="w-full h-full object-cover" />
+            ) : apiState.streamUrl ? (
+              <iframe
+                src={apiState.streamUrl}
+                title={`Stream CCTV ${driver.vehiclePlate}`}
+                className="w-full h-full border-0 bg-black"
+                allow="autoplay; fullscreen"
+              />
+            ) : isOnline ? (
               <>
-                {/* Visual Scene */}
                 <div className="absolute inset-0 bg-gradient-to-b from-slate-800 via-slate-900 to-slate-950 flex items-center justify-center">
                   {activeChannel === 'dashcam' && (
                     <svg viewBox="0 0 400 220" className="w-full h-full opacity-75">
@@ -160,7 +266,6 @@ export default function ArmadaCctvModal({
                   )}
                 </div>
 
-                {/* Camera Scanlines / HUD */}
                 <div className="relative z-10 h-full flex flex-col justify-between p-3 sm:p-4 bg-gradient-to-t from-black/75 via-transparent to-black/60">
                   <div className="flex items-center justify-between gap-2 text-[11px] font-mono">
                     <div className="flex items-center gap-2">
@@ -204,6 +309,12 @@ export default function ArmadaCctvModal({
 
           <p className="text-xs text-gray-500">{channelMeta.desc}</p>
 
+          {apiState.configured && apiState.message && !apiState.streamUrl && !apiState.snapshotUrl && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-3.5 py-2 text-xs">
+              {apiState.message}
+            </div>
+          )}
+
           {isLongStop && (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-3.5 py-2.5 text-xs flex items-start gap-2">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
@@ -244,4 +355,3 @@ export default function ArmadaCctvModal({
     </div>
   );
 }
-

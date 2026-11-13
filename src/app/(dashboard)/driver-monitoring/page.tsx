@@ -3,20 +3,22 @@
 import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  Search, Eye, RefreshCw, Send, X, Pencil, Video, ClockAlert, MapPin,
+  Search, Eye, RefreshCw, Send, X, Pencil, Video, ClockAlert, MapPin, Settings,
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 import { mockTransporters } from '@/lib/mock-data';
 import { DRIVER_STATUS_COLORS, DRIVER_STATUS_LABELS, type Driver, type DriverStatus } from '@/lib/types';
+import { loadIntegrationSettings } from '@/lib/integrations';
 import FleetGpsMap from '@/components/monitoring/FleetGpsMap';
 import ArmadaCctvModal from '@/components/monitoring/ArmadaCctvModal';
 
 export default function DriverMonitoringPage() {
   const {
     drivers, shipments, rcaEvents, updateDriver, updateDriverStatus,
-    sendNotification, simulateLongStop, addAudit,
+    sendNotification, simulateLongStop, syncGpsLocations, addAudit,
   } = useData();
+  const [syncingGps, setSyncingGps] = useState(false);
   const { user, hasRole } = useAuth();
   const isDriver = hasRole('driver');
   const canEdit = hasRole('admin');
@@ -121,6 +123,36 @@ export default function DriverMonitoringPage() {
     showToast(`Deteksi berhenti > 2 jam untuk ${d.name} (${d.vehiclePlate}). Notifikasi wajib isi RCA telah dikirim ke driver.`);
   };
 
+  const handleSyncGpsApi = async () => {
+    setSyncingGps(true);
+    const gpsCfg = loadIntegrationSettings().gps;
+    try {
+      const res = await fetch('/api/integrations/gps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpointUrl: gpsCfg.baseUrl,
+          token: gpsCfg.token,
+          authHeader: gpsCfg.authHeader,
+          authPrefix: gpsCfg.authPrefix,
+        }),
+      });
+      const json = await res.json();
+      if (!json.configured) {
+        showToast(json.message ?? 'Endpoint API GPS belum diisi di menu Pengaturan & API.');
+      } else if (json.ok && Array.isArray(json.items)) {
+        const count = syncGpsLocations(json.items, actor, gpsCfg.longStopThresholdMinutes);
+        showToast(`Sinkronisasi GPS berhasil (${count} armada diperbarui).`);
+      } else {
+        showToast(json.message ?? 'Gagal menyinkronkan data dari API GPS.');
+      }
+    } catch {
+      showToast('Gagal menghubungi API GPS.');
+    } finally {
+      setSyncingGps(false);
+    }
+  };
+
   const closeAllModals = () => {
     setDetailId(null);
     setStatusId(null);
@@ -131,13 +163,34 @@ export default function DriverMonitoringPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Driver Monitoring &amp; GPS / CCTV</h1>
-        <p className="text-xs sm:text-sm text-gray-500">
-          {canEdit
-            ? 'Pantau posisi GPS armada, akses CCTV kendaraan, ubah data driver, dan deteksi berhenti > 2 jam.'
-            : 'Pantau seluruh aktivitas driver, posisi GPS armada, dan status pengiriman.'}
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Driver Monitoring &amp; GPS / CCTV</h1>
+          <p className="text-xs sm:text-sm text-gray-500">
+            {canEdit
+              ? 'Pantau posisi GPS armada, akses CCTV kendaraan, ubah data driver, dan deteksi berhenti > 2 jam.'
+              : 'Pantau seluruh aktivitas driver, posisi GPS armada, dan status pengiriman.'}
+          </p>
+        </div>
+        {canEdit && (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={syncingGps}
+              onClick={handleSyncGpsApi}
+              className="inline-flex items-center gap-1.5 bg-[#0f2b5b] hover:bg-[#1a3d7a] text-white text-xs font-medium px-3.5 py-2 rounded-lg disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={syncingGps ? 'animate-spin' : ''} />
+              {syncingGps ? 'Sinkronisasi...' : 'Sinkronkan GPS API'}
+            </button>
+            <Link
+              href="/settings"
+              className="inline-flex items-center gap-1.5 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-xs font-medium px-3.5 py-2 rounded-lg"
+            >
+              <Settings size={14} /> Atur API CCTV &amp; GPS
+            </Link>
+          </div>
+        )}
       </div>
 
       {feedback && (

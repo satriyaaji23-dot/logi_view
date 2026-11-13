@@ -75,7 +75,7 @@ export default function Sidebar() {
         { label: 'Leaderboard', href: '/leaderboard', icon: <Trophy size={20} />, roles: ['admin', 'supervisor'] },
         { label: 'Reward', href: '/reward', icon: <Gift size={20} />, roles: ['admin', 'supervisor'] },
         { label: 'Laporan', href: '/reports', icon: <FileText size={20} />, roles: ['admin', 'supervisor'] },
-        { label: 'Pengaturan Poin', href: '/settings', icon: <Settings size={20} />, roles: ['admin'] },
+        { label: 'Pengaturan & API', href: '/settings', icon: <Settings size={20} />, roles: ['admin'] },
       ];
 
   const filteredNav = navItems.filter(item => user && item.roles.includes(user.role));
