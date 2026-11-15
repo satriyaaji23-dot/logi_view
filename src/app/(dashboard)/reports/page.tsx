@@ -6,15 +6,27 @@ import { Download, Printer } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 import { RCA_CATEGORY_LABELS, VERIFICATION_STATUS_LABELS } from '@/lib/types';
+import {
+  buildDriverPeriodSummaries,
+  collectAvailablePeriods,
+  evaluateShipmentOntime,
+  extractDateOnly,
+  formatTravelDaysLabel,
+} from '@/lib/scoring';
 
-type ReportKey = 'otif' | 'driver' | 'rca' | 'pelanggaran' | 'poin' | 'perjalanan';
+type ReportKey = 'otif' | 'rekap_periode' | 'driver' | 'rca' | 'pelanggaran' | 'poin' | 'perjalanan';
 const REPORTS: Record<ReportKey, string> = {
-  otif: 'Rekap OTIF & On Time / Late', driver: 'Rekap Performa Driver', rca: 'Rekap RCA',
-  pelanggaran: 'Rekap Pelanggaran', poin: 'Rekap Reward & Punishment', perjalanan: 'Riwayat Perjalanan Driver',
+  otif: 'Rekap OTIF & Ontime Delivery (Ontime / Late)',
+  rekap_periode: 'Rekap Penjumlahan Reward & Sanksi Periode (Tgl 16 – 15)',
+  driver: 'Rekap Performa Driver',
+  rca: 'Rekap RCA',
+  pelanggaran: 'Rekap Pelanggaran',
+  poin: 'Rekap Reward & Punishment',
+  perjalanan: 'Riwayat Perjalanan Driver',
 };
 
 export default function ReportsPage() {
-  const { drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions } = useData();
+  const { drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules } = useData();
   const { hasRole } = useAuth();
   const isDriver = hasRole('driver');
   const [type, setType] = useState<ReportKey>('otif');
@@ -25,14 +37,44 @@ export default function ReportsPage() {
   const [cat, setCat] = useState('');
   const mitraList = Array.from(new Set(drivers.map(d => d.transporterName)));
   const inRange = (date: string) => (!from || date.slice(0, 10) >= from) && (!to || date.slice(0, 10) <= to);
+  const periods = useMemo(
+    () => collectAvailablePeriods(shipments.map(s => s.arrivalUnloadDate || s.actualArrival || s.departureTime)),
+    [shipments]
+  );
 
   const { headers, rows } = useMemo(() => {
     const dOk = (id: string) => (!driverId || id === driverId) && (!mitra || drivers.find(d => d.id === id)?.transporterName === mitra);
     switch (type) {
       case 'otif': return {
-        headers: ['Surat Jalan', 'Driver', 'Mitra', 'Tujuan', 'On Time', 'In Full', 'OTIF'],
-        rows: shipments.filter(s => dOk(s.driverId) && inRange(s.departureTime)).map(s => [s.suratJalanNo, s.driverName, s.transporterName, s.destination, s.isOnTime ? 'Ya' : 'Tidak', s.isInFull ? 'Ya' : 'Tidak', s.isOTIF ? 'Ya' : 'Tidak']),
+        headers: ['Surat Jalan', 'Driver', 'Mitra', 'Tujuan', 'Tgl Transfer Sangu / Berangkat', 'Tgl Tiba Bongkar', 'Standar (Hari)', 'Aktual (Hari)', 'Nilai', 'OTIF'],
+        rows: shipments.filter(s => dOk(s.driverId) && inRange(s.sanguTransferDate || s.departureTime)).map(s => {
+          const ev = evaluateShipmentOntime(s);
+          return [
+            s.suratJalanNo, s.driverName, s.transporterName, s.destination,
+            extractDateOnly(s.sanguTransferDate || s.departureTime) || '-',
+            extractDateOnly(s.arrivalUnloadDate || s.actualArrival) || '-',
+            `${ev.standardDays} hari`,
+            formatTravelDaysLabel(ev.actualDays),
+            ev.ontimeStatus,
+            s.isOTIF ? 'Ya' : 'Tidak',
+          ];
+        }),
       };
+      case 'rekap_periode': {
+        const activePeriod = periods[0];
+        if (!activePeriod) return { headers: ['Periode', 'Driver'], rows: [] };
+        const summaries = buildDriverPeriodSummaries(
+          drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, activePeriod
+        ).filter(s => dOk(s.driver.id) && (s.totalShipments > 0 || s.totalReward > 0 || s.totalSanction > 0));
+        return {
+          headers: ['Periode (16–15)', 'Batas Pencairan', 'Driver', 'Mitra', 'Ontime', 'Late (Salah Driver)', 'Hari Standar (Ontime)', 'Total Reward', 'Total Sanksi', 'Net Akhir Periode'],
+          rows: summaries.map(s => [
+            activePeriod.label, activePeriod.payoutDeadlineLabel, s.driver.name, s.driver.transporterName,
+            s.ontimeCount, `${s.lateCount} (${s.lateDriverFaultCount})`, `${s.standardDaysOntime} hr`,
+            `+${s.totalReward}`, `-${s.totalSanction}`, s.netPeriodPoints,
+          ]),
+        };
+      }
       case 'driver': return {
         headers: ['ID', 'Nama', 'Mitra', 'Total', 'On Time', 'Late', '% On Time', 'Pelanggaran', 'Reward', 'Punishment', 'Skor'],
         rows: drivers.filter(d => dOk(d.id)).map(d => [d.id, d.name, d.transporterName, d.totalDeliveries, d.onTimeDeliveries, d.lateDeliveries, `${d.onTimePercentage}%`, d.validViolations, d.totalRewardPoints, d.totalPunishmentPoints, d.finalScore]),
@@ -55,7 +97,7 @@ export default function ReportsPage() {
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type, from, to, driverId, mitra, cat, drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions]);
+  }, [type, from, to, driverId, mitra, cat, drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, periods]);
 
   const total = shipments.length;
   const onTime = shipments.filter(s => s.isOnTime).length;

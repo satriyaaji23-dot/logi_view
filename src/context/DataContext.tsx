@@ -10,6 +10,14 @@ import {
   mockDrivers, mockShipments, mockRCAEvents, mockRewardTransactions, mockPunishmentTransactions,
   mockRewardRules, mockDriverRewards, mockNotifications,
 } from '@/lib/mock-data';
+import {
+  buildDriverPeriodSummaries,
+  calculateShipmentRewardPoints,
+  computeActualTravelDays,
+  getPunishmentPoints,
+  getRewardPeriodForDate,
+  getRewardPerDayPoints,
+} from '@/lib/scoring';
 
 const LONG_STOP_THRESHOLD_MINUTES = 120; // > 2 jam
 const RCA_DEADLINE_MS = 30 * 60 * 1000; // 30 menit batas waktu isi RCA
@@ -24,6 +32,7 @@ interface NewRCAInput {
   description: string;
   evidence?: string[];
   notificationId?: string;
+  shipmentId?: string;
 }
 
 interface DataContextType {
@@ -38,8 +47,12 @@ interface DataContextType {
   auditLogs: AuditLog[];
   /** Tambah kejadian RCA. Kategori eksternal TIDAK mengurangi poin. Jika terkait notifikasi berhenti > 2 jam, otomatis tandai sudah diisi. */
   addRCAEvent: (input: NewRCAInput, actor: string) => RCAEvent;
-  /** Verifikasi RCA oleh Admin. Punishment diterapkan jika terbukti pelanggaran & bukan eksternal. */
+  /** Verifikasi RCA oleh Admin. Sanksi diterapkan jika Late & RCA terbukti kesalahan driver. */
   verifyRCAEvent: (id: string, status: VerificationStatus, decision: string, actor: string) => void;
+  /** Selesaikan shipment dengan tanggal tiba di lokasi bongkar -> hitung Ontime/Late & reward per hari standar. */
+  completeShipment: (shipmentId: string, arrivalUnloadDate: string, actor: string) => void;
+  /** Hitung & rekap penjumlahan akhir periode (Tgl 16 - 15) untuk pencairan maks. Tgl 21. */
+  finalizeRewardPeriod: (periodStartOrKey: string, actor: string) => void;
   updateDriver: (
     driverId: string,
     patch: Partial<Pick<Driver, 'name' | 'phone' | 'licenseNumber' | 'vehiclePlate' | 'transporterId' | 'transporterName' | 'status'>>,
@@ -193,6 +206,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         type: 'punishment',
         points: pts,
         reason: `Otomatis: Tidak mengisi RCA setelah berhenti > 2 jam (${notif.id})`,
+        periodKey: getRewardPeriodForDate(nowIso).key,
         ruleId: rule?.id,
         verifiedBefore: false,
         createdAt: nowIso,
@@ -391,6 +405,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       notifications.find(
         n => n.driverId === input.driverId && n.requiresRca && !n.rcaSubmitted && !n.autoPunished
       );
+    const linkedShipment = input.shipmentId
+      ? shipments.find(s => s.id === input.shipmentId)
+      : shipments.find(s => s.driverId === input.driverId && (s.ontimeStatus === 'Late' || !s.isOnTime));
 
     const ev: RCAEvent = {
       id: nid('RCA'),
@@ -407,9 +424,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
       verificationStatus: 'menunggu_verifikasi',
       isExternalCause: EXTERNAL_RCA_CATEGORIES.includes(input.category),
       notificationId: matchedNotif?.id,
+      shipmentId: linkedShipment?.id,
       createdAt: new Date().toISOString(),
     };
     setRcaEvents(prev => [ev, ...prev]);
+
+    if (linkedShipment) {
+      setShipments(prev =>
+        prev.map(s =>
+          s.id === linkedShipment.id
+            ? { ...s, rcaEventId: ev.id, rcaFault: ev.isExternalCause ? 'external' : 'pending' }
+            : s
+        )
+      );
+    }
 
     if (matchedNotif) {
       setNotifications(prev =>
@@ -432,11 +460,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       'CREATE',
       'rca_events',
       ev.id,
-      `Kejadian ${input.category} dicatat untuk ${ev.driverName}${matchedNotif ? ` (menjawab notifikasi ${matchedNotif.id})` : ''}`,
+      `Kejadian ${input.category} dicatat untuk ${ev.driverName}${linkedShipment ? ` (${linkedShipment.suratJalanNo})` : ''}${matchedNotif ? ` (menjawab notifikasi ${matchedNotif.id})` : ''}`,
       actor
     );
     return ev;
-  }, [drivers, notifications, addAudit]);
+  }, [drivers, notifications, shipments, addAudit]);
 
   const verifyRCAEvent = useCallback((id: string, status: VerificationStatus, decision: string, actor: string) => {
     const ev = rcaEvents.find(e => e.id === id);
@@ -444,16 +472,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     const linkedNotif = ev.notificationId ? notifications.find(n => n.id === ev.notificationId) : undefined;
     const alreadyPunishedOnNotif = linkedNotif?.autoPunished ?? false;
+    const linkedShipment =
+      (ev.shipmentId ? shipments.find(s => s.id === ev.shipmentId) : undefined) ??
+      shipments.find(s => s.rcaEventId === ev.id);
 
-    // Punishment hanya jika terverifikasi pelanggaran, bukan eksternal, dan belum pernah diberi poin
+    const isShipmentLate = linkedShipment ? (linkedShipment.ontimeStatus === 'Late' || !linkedShipment.isOnTime) : true;
+    const isDriverFault = status === 'terverifikasi_pelanggaran' && !ev.isExternalCause;
+
+    // Ketentuan #6: Sanksi diberikan apabila Ontime Delivery bernilai "Late" dan RCA merupakan kesalahan driver
     const shouldPunish =
-      status === 'terverifikasi_pelanggaran' &&
-      !ev.isExternalCause &&
+      isDriverFault &&
+      isShipmentLate &&
       !ev.pointsDeducted &&
       !alreadyPunishedOnNotif;
     const rule = rules.find(r => r.type === 'punishment' && r.isActive && r.category === ev.category);
-    const pts = shouldPunish ? (rule?.points ?? 5) : 0;
+    const pts = shouldPunish ? getPunishmentPoints(rules, ev.category) : 0;
     const nowIso = new Date().toISOString();
+    const period = getRewardPeriodForDate(
+      linkedShipment?.arrivalUnloadDate || linkedShipment?.actualArrival || ev.eventDate
+    );
 
     setRcaEvents(prev =>
       prev.map(e =>
@@ -470,6 +507,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
       )
     );
 
+    if (linkedShipment) {
+      const nextFault =
+        status === 'terverifikasi_pelanggaran' && !ev.isExternalCause
+          ? 'driver'
+          : status === 'dikecualikan' || status === 'ditolak' || ev.isExternalCause
+          ? 'external'
+          : 'pending';
+      setShipments(prev =>
+        prev.map(s => (s.id === linkedShipment.id ? { ...s, rcaEventId: ev.id, rcaFault: nextFault } : s))
+      );
+    }
+
     if (ev.notificationId && ['terverifikasi_pelanggaran', 'dikecualikan', 'ditolak'].includes(status)) {
       setNotifications(prev =>
         prev.map(n => (n.id === ev.notificationId ? { ...n, handlingStatus: 'selesai' } : n))
@@ -484,8 +533,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
           driverName: ev.driverName,
           type: 'punishment',
           points: pts,
-          reason: `${rule?.name ?? ev.category} - ${ev.id}`,
+          reason: linkedShipment
+            ? `Sanksi Late ${linkedShipment.suratJalanNo} + RCA Kesalahan Driver (${rule?.name ?? ev.category}) - ${ev.id}`
+            : `${rule?.name ?? ev.category} - ${ev.id}`,
           rcaEventId: ev.id,
+          shipmentId: linkedShipment?.id,
+          periodKey: period.key,
           ruleId: rule?.id,
           verifiedBefore: true,
           createdAt: nowIso,
@@ -510,9 +563,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (['terverifikasi_pelanggaran', 'dikecualikan', 'ditolak'].includes(status)) {
       const verdictText =
         status === 'dikecualikan'
-          ? 'RCA dinyatakan SESUAI / Dikecualikan (tidak ada pengurangan poin).'
+          ? 'RCA dinyatakan SESUAI / Bukan Kesalahan Driver (bebas sanksi, tidak ada pengurangan poin).'
           : status === 'terverifikasi_pelanggaran'
-          ? `RCA dinilai TIDAK SESUAI / Terverifikasi Pelanggaran${pts > 0 ? ` (-${pts} poin)` : ''}.`
+          ? isShipmentLate
+            ? `Pengiriman Late & RCA dinilai kesalahan driver${pts > 0 ? ` (-${pts} poin)` : ''}.`
+            : 'RCA dinilai kesalahan driver, namun pengiriman Ontime sehingga sanksi keterlambatan tidak berlaku.'
           : 'RCA ditolak / dinyatakan tidak terbukti.';
       setNotifications(prev => [
         {
@@ -531,37 +586,171 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ]);
     }
 
-    addAudit('VERIFY', 'rca_events', id, `Status: ${status}. Keputusan: ${decision}. Poin dikurangi: ${pts}`, actor);
-  }, [rcaEvents, notifications, rules, addAudit]);
+    addAudit('VERIFY', 'rca_events', id, `Status: ${status}. Keputusan: ${decision}. Sanksi poin: ${pts}`, actor);
+  }, [rcaEvents, notifications, shipments, rules, addAudit]);
+
+  const completeShipment = useCallback((shipmentId: string, arrivalUnloadDate: string, actor: string) => {
+    const sh = shipments.find(s => s.id === shipmentId);
+    if (!sh) return;
+
+    const startDate = sh.sanguTransferDate || sh.departureTime;
+    const actualDays = computeActualTravelDays(startDate, arrivalUnloadDate) ?? sh.standardDays;
+    const standardDays = Math.max(1, sh.standardDays || 1);
+    const ontimeStatus = actualDays <= standardDays ? 'Ontime' : 'Late';
+    const isOnTime = ontimeStatus === 'Ontime';
+    const pointsPerDay = getRewardPerDayPoints(rules);
+    const rewardPts = calculateShipmentRewardPoints(standardDays, ontimeStatus, pointsPerDay);
+    const period = getRewardPeriodForDate(arrivalUnloadDate);
+    const nowIso = new Date().toISOString();
+
+    setShipments(prev =>
+      prev.map(s =>
+        s.id === shipmentId
+          ? {
+              ...s,
+              arrivalUnloadDate,
+              actualArrival: arrivalUnloadDate,
+              actualDays,
+              ontimeStatus,
+              isOnTime,
+              isOTIF: isOnTime && s.isInFull,
+              status: 'completed',
+              driverStatus: 'selesai_pengiriman',
+              travelDuration: actualDays === 0 ? '< 1 hari' : `${actualDays} hari`,
+              rcaFault: isOnTime ? 'none' : (s.rcaFault ?? 'pending'),
+            }
+          : s
+      )
+    );
+
+    setDrivers(prev =>
+      prev.map(d =>
+        d.id === sh.driverId
+          ? recompute({
+              ...d,
+              status: 'selesai_pengiriman',
+              totalDeliveries: d.totalDeliveries + 1,
+              onTimeDeliveries: d.onTimeDeliveries + (isOnTime ? 1 : 0),
+              lateDeliveries: d.lateDeliveries + (isOnTime ? 0 : 1),
+              totalRewardPoints: d.totalRewardPoints + rewardPts,
+            })
+          : d
+      )
+    );
+
+    if (isOnTime && rewardPts > 0) {
+      setRewardTx(prev => [
+        {
+          id: nid('RT'),
+          driverId: sh.driverId,
+          driverName: sh.driverName,
+          type: 'reward',
+          points: rewardPts,
+          standardDays,
+          periodKey: period.key,
+          reason: `Ontime ${sh.suratJalanNo} (${actualDays} hr ≤ standar ${standardDays} hr × ${pointsPerDay} poin)`,
+          shipmentId: sh.id,
+          createdAt: arrivalUnloadDate || nowIso,
+          createdBy: actor,
+        },
+        ...prev,
+      ]);
+    }
+
+    addAudit(
+      'COMPLETE_SHIPMENT',
+      'shipments',
+      sh.id,
+      `${sh.suratJalanNo} tiba di lokasi bongkar (${actualDays} hari vs standar ${standardDays} hari -> ${ontimeStatus}, reward +${rewardPts} poin)`,
+      actor
+    );
+  }, [shipments, rules, addAudit]);
 
   const updateDriverStatus = useCallback((driverId: string, status: DriverStatus, actor: string) => {
     setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, status } : d));
-    setShipments(prev => prev.map(s => s.driverId === driverId && s.status !== 'completed' ? {
-      ...s, driverStatus: status, status: status === 'selesai_pengiriman' ? 'completed' : s.status,
-    } : s));
 
-    // Selesai pengiriman tepat waktu -> reward otomatis sesuai aturan
     if (status === 'selesai_pengiriman') {
       const sh = shipments.find(s => s.driverId === driverId && s.status !== 'completed');
-      const rule = rules.find(r => r.type === 'reward' && r.isActive && r.name === 'Pengiriman Tepat Waktu');
-      const onTime = sh ? sh.isOnTime : true;
-      setDrivers(prev => prev.map(d => d.id === driverId ? recompute({
-        ...d, totalDeliveries: d.totalDeliveries + 1,
-        onTimeDeliveries: d.onTimeDeliveries + (onTime ? 1 : 0),
-        lateDeliveries: d.lateDeliveries + (onTime ? 0 : 1),
-        totalRewardPoints: d.totalRewardPoints + (onTime && rule ? rule.points : 0),
-      }) : d));
-      if (onTime && rule) {
-        const drv = drivers.find(d => d.id === driverId);
-        setRewardTx(prev => [{
-          id: nid('RT'), driverId, driverName: drv?.name ?? '-', type: 'reward', points: rule.points,
-          reason: `Pengiriman ${sh?.suratJalanNo ?? ''} tepat waktu`, ruleId: rule.id, shipmentId: sh?.id,
-          createdAt: new Date().toISOString(), createdBy: 'System',
-        }, ...prev]);
+      if (sh) {
+        completeShipment(sh.id, new Date().toISOString(), actor);
+        return;
       }
+      const pointsPerDay = getRewardPerDayPoints(rules);
+      const drv = drivers.find(d => d.id === driverId);
+      const nowIso = new Date().toISOString();
+      const period = getRewardPeriodForDate(nowIso);
+      setDrivers(prev => prev.map(d => d.id === driverId ? recompute({
+        ...d,
+        totalDeliveries: d.totalDeliveries + 1,
+        onTimeDeliveries: d.onTimeDeliveries + 1,
+        totalRewardPoints: d.totalRewardPoints + pointsPerDay,
+      }) : d));
+      setRewardTx(prev => [{
+        id: nid('RT'), driverId, driverName: drv?.name ?? '-', type: 'reward', points: pointsPerDay,
+        standardDays: 1, periodKey: period.key, reason: 'Pengiriman selesai Ontime (1 hari standar)',
+        createdAt: nowIso, createdBy: 'System',
+      }, ...prev]);
+    } else {
+      setShipments(prev => prev.map(s => s.driverId === driverId && s.status !== 'completed' ? {
+        ...s, driverStatus: status,
+      } : s));
     }
     addAudit('UPDATE', 'drivers', driverId, `Status diubah menjadi ${status}`, actor);
-  }, [shipments, rules, drivers, addAudit]);
+  }, [shipments, rules, drivers, completeShipment, addAudit]);
+
+  const finalizeRewardPeriod = useCallback((periodStartOrKey: string, actor: string) => {
+    const startPart = periodStartOrKey.split('_')[0];
+    const period = getRewardPeriodForDate(startPart);
+    const summaries = buildDriverPeriodSummaries(
+      drivers,
+      shipments,
+      rcaEvents,
+      rewardTransactions,
+      punishmentTransactions,
+      rules,
+      period
+    ).filter(s => s.totalShipments > 0 || s.totalReward > 0 || s.totalSanction > 0);
+
+    setDriverRewards(prev => {
+      const remaining = prev.filter(r => r.periodKey !== period.key && r.period !== period.label);
+      const generated: DriverReward[] = summaries.map((s, idx) => {
+        const existing = prev.find(
+          r => r.driverId === s.driver.id && (r.periodKey === period.key || r.period === period.label)
+        );
+        return {
+          id: existing?.id ?? nid('DR'),
+          driverId: s.driver.id,
+          driverName: s.driver.name,
+          achievementType: 'Reward Ontime Delivery',
+          period: period.label,
+          periodKey: period.key,
+          payoutDeadline: period.payoutDeadlineDate,
+          paidAt: existing?.paidAt,
+          onTimeDeliveries: s.ontimeCount,
+          lateDeliveries: s.lateCount,
+          lateDriverFaultCount: s.lateDriverFaultCount,
+          totalDeliveries: s.totalShipments,
+          standardDaysTotal: s.standardDaysOntime,
+          totalReward: s.totalReward,
+          totalSanction: s.totalSanction,
+          rewardPoints: s.netPeriodPoints,
+          rank: idx + 1,
+          status: existing?.status ?? 'menunggu_persetujuan',
+          approvedBy: existing?.approvedBy,
+          approvedAt: existing?.approvedAt,
+        };
+      });
+      return [...generated, ...remaining];
+    });
+
+    addAudit(
+      'SETTLE_PERIOD',
+      'driver_rewards',
+      period.key,
+      `Penjumlahan akhir periode ${period.label} (${summaries.length} driver) — batas pencairan ${period.payoutDeadlineLabel}`,
+      actor
+    );
+  }, [drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, addAudit]);
 
   const updateDriver = useCallback((
     driverId: string,
@@ -617,32 +806,47 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const adjustPoints = useCallback((driverId: string, points: number, reason: string, actor: string) => {
     const drv = drivers.find(d => d.id === driverId);
     if (!drv || points === 0) return;
+    const nowIso = new Date().toISOString();
+    const periodKey = getRewardPeriodForDate(nowIso).key;
     if (points > 0) {
-      setRewardTx(prev => [{ id: nid('RT'), driverId, driverName: drv.name, type: 'reward', points, reason: `Koreksi admin: ${reason}`, createdAt: new Date().toISOString(), createdBy: actor }, ...prev]);
+      setRewardTx(prev => [{ id: nid('RT'), driverId, driverName: drv.name, type: 'reward', points, periodKey, reason: `Koreksi admin: ${reason}`, createdAt: nowIso, createdBy: actor }, ...prev]);
       setDrivers(prev => prev.map(d => d.id === driverId ? recompute({ ...d, totalRewardPoints: d.totalRewardPoints + points }) : d));
     } else {
       const p = Math.abs(points);
-      setPunishTx(prev => [{ id: nid('PT'), driverId, driverName: drv.name, type: 'punishment', points: p, reason: `Koreksi admin: ${reason}`, verifiedBefore: true, createdAt: new Date().toISOString(), createdBy: actor }, ...prev]);
+      setPunishTx(prev => [{ id: nid('PT'), driverId, driverName: drv.name, type: 'punishment', points: p, periodKey, reason: `Koreksi admin: ${reason}`, verifiedBefore: true, createdAt: nowIso, createdBy: actor }, ...prev]);
       setDrivers(prev => prev.map(d => d.id === driverId ? recompute({ ...d, totalPunishmentPoints: d.totalPunishmentPoints + p }) : d));
     }
     addAudit('ADJUST_POINTS', 'drivers', driverId, `${points > 0 ? '+' : ''}${points} poin. Alasan: ${reason}`, actor);
   }, [drivers, addAudit]);
 
   const setDriverRewardStatus = useCallback((id: string, status: RewardStatus, actor: string) => {
-    setDriverRewards(prev => prev.map(r => r.id === id ? { ...r, status, approvedBy: actor, approvedAt: new Date().toISOString() } : r));
-    addAudit('UPDATE', 'driver_rewards', id, `Status reward: ${status}`, actor);
+    const nowIso = new Date().toISOString();
+    setDriverRewards(prev =>
+      prev.map(r =>
+        r.id === id
+          ? {
+              ...r,
+              status,
+              approvedBy: actor,
+              approvedAt: nowIso.slice(0, 10),
+              paidAt: status === 'sudah_diberikan' ? nowIso.slice(0, 10) : r.paidAt,
+            }
+          : r
+      )
+    );
+    addAudit('UPDATE', 'driver_rewards', id, `Status pencairan reward: ${status}`, actor);
   }, [addAudit]);
 
   const value = useMemo(() => ({
     drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
-    notifications, auditLogs, addRCAEvent, verifyRCAEvent, updateDriver, updateDriverStatus,
-    sendNotification, setNotificationHandling, markNotificationRead, simulateLongStop, syncGpsLocations,
-    triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
+    notifications, auditLogs, addRCAEvent, verifyRCAEvent, completeShipment, finalizeRewardPeriod,
+    updateDriver, updateDriverStatus, sendNotification, setNotificationHandling, markNotificationRead,
+    simulateLongStop, syncGpsLocations, triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
   }), [
     drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
-    notifications, auditLogs, addRCAEvent, verifyRCAEvent, updateDriver, updateDriverStatus,
-    sendNotification, setNotificationHandling, markNotificationRead, simulateLongStop, syncGpsLocations,
-    triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
+    notifications, auditLogs, addRCAEvent, verifyRCAEvent, completeShipment, finalizeRewardPeriod,
+    updateDriver, updateDriverStatus, sendNotification, setNotificationHandling, markNotificationRead,
+    simulateLongStop, syncGpsLocations, triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
   ]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

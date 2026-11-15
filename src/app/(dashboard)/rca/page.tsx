@@ -11,7 +11,7 @@ import {
 import ArmadaCctvModal from '@/components/monitoring/ArmadaCctvModal';
 
 export default function RCAPage() {
-  const { rcaEvents, drivers, notifications, addRCAEvent, verifyRCAEvent, addAudit } = useData();
+  const { rcaEvents, drivers, shipments, notifications, addRCAEvent, verifyRCAEvent, addAudit } = useData();
   const { user, hasRole } = useAuth();
   const isAdmin = hasRole('admin');
   const isDriver = hasRole('driver');
@@ -22,6 +22,7 @@ export default function RCAPage() {
   const [linkedNotifId, setLinkedNotifId] = useState<string | undefined>(undefined);
   const [form, setForm] = useState({
     driverId: user?.driverId ?? '',
+    shipmentId: '',
     eventDate: new Date().toISOString().slice(0, 10),
     eventTime: '08:00',
     category: 'parkir_lama' as RCACategory,
@@ -40,9 +41,13 @@ export default function RCAPage() {
     const h = Math.floor(mins / 60);
     const m = mins % 60;
     const durText = m > 0 ? `${h} jam ${m} menit` : `${h} jam`;
+    const activeLateShipment = shipments.find(
+      s => s.driverId === alert.driverId && (s.ontimeStatus === 'Late' || !s.isOnTime || s.status !== 'completed')
+    );
     setLinkedNotifId(alert.id);
     setForm({
       driverId: alert.driverId,
+      shipmentId: activeLateShipment?.id ?? '',
       eventDate: new Date().toISOString().slice(0, 10),
       eventTime: new Date().toTimeString().slice(0, 5),
       category: 'parkir_lama',
@@ -73,8 +78,8 @@ export default function RCAPage() {
   );
   const pendingAlertsForDriver = isDriver
     ? notifications.filter(
-        n => n.driverId === user?.driverId && n.requiresRca && !n.rcaSubmitted && !n.autoPunished
-      )
+      n => n.driverId === user?.driverId && n.requiresRca && !n.rcaSubmitted && !n.autoPunished
+    )
     : [];
   const external = EXTERNAL_RCA_CATEGORIES.includes(form.category);
 
@@ -82,16 +87,25 @@ export default function RCAPage() {
     e.preventDefault();
     if (!form.driverId) return;
     addRCAEvent(
-      { ...form, notificationId: linkedNotifId, evidence: form.evidence ? [form.evidence] : undefined },
+      {
+        ...form,
+        shipmentId: form.shipmentId || undefined,
+        notificationId: linkedNotifId,
+        evidence: form.evidence ? [form.evidence] : undefined,
+      },
       actor
     );
     setShowForm(false);
     setLinkedNotifId(undefined);
-    setForm(f => ({ ...f, location: '', duration: '', description: '', evidence: '' }));
+    setForm(f => ({ ...f, shipmentId: '', location: '', duration: '', description: '', evidence: '' }));
   };
 
   const vEvent = rcaEvents.find(e => e.id === verifyId);
   const vDriver = vEvent ? drivers.find(d => d.id === vEvent.driverId) : undefined;
+  const vShipment = vEvent
+    ? shipments.find(s => s.id === vEvent.shipmentId || s.rcaEventId === vEvent.id)
+    : undefined;
+  const driverShipmentsForForm = shipments.filter(s => !form.driverId || s.driverId === form.driverId);
   const cctvDriver = drivers.find(d => d.id === cctvDriverId) ?? null;
 
   return (
@@ -283,12 +297,21 @@ export default function RCAPage() {
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <label>Nama Driver
-                <select required disabled={isDriver} value={form.driverId} onChange={e => setForm({ ...form, driverId: e.target.value })} className="border rounded-lg px-3 py-2 w-full mt-1 bg-white">
+                <select required disabled={isDriver} value={form.driverId} onChange={e => setForm({ ...form, driverId: e.target.value, shipmentId: '' })} className="border rounded-lg px-3 py-2 w-full mt-1 bg-white">
                   <option value="">Pilih driver</option>
                   {drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </label>
-              <label>ID Driver<input readOnly value={selected?.id ?? ''} className="border rounded-lg px-3 py-2 w-full mt-1 bg-gray-50" /></label>
+              <label>Surat Jalan / Shipment Terkait
+                <select value={form.shipmentId} onChange={e => setForm({ ...form, shipmentId: e.target.value })} className="border rounded-lg px-3 py-2 w-full mt-1 bg-white">
+                  <option value="">Otomatis / Tidak tertaut</option>
+                  {driverShipmentsForForm.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.suratJalanNo} · {s.destination} ({s.ontimeStatus ?? (s.isOnTime ? 'Ontime' : 'Late')})
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label>Nomor Kendaraan<input readOnly value={selected?.vehiclePlate ?? ''} className="border rounded-lg px-3 py-2 w-full mt-1 bg-gray-50" /></label>
               <label>Kategori RCA
                 <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value as RCACategory })} className="border rounded-lg px-3 py-2 w-full mt-1 bg-white">
@@ -343,7 +366,19 @@ export default function RCAPage() {
               <p><b>Driver:</b> {vEvent.driverName} ({vEvent.vehiclePlate})</p>
               <p><b>Kategori:</b> {RCA_CATEGORY_LABELS[vEvent.category]} · <b>Durasi:</b> {vEvent.duration}</p>
               <p><b>Lokasi Laporan:</b> {vEvent.location}</p>
+              {vShipment && (
+                <p>
+                  <b>Shipment Terkait:</b> {vShipment.suratJalanNo} ({vShipment.origin} → {vShipment.destination}) · Status:{' '}
+                  <span className={`font-semibold ${vShipment.ontimeStatus === 'Late' || !vShipment.isOnTime ? 'text-red-600' : 'text-emerald-700'}`}>
+                    {vShipment.ontimeStatus ?? (vShipment.isOnTime ? 'Ontime' : 'Late')}
+                  </span>
+                </p>
+              )}
               <p className="pt-1 text-gray-700"><b>Kronologi Sopir:</b> {vEvent.description}</p>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg p-2.5 text-xs">
+              <b>Ketentuan Sanksi:</b> Sanksi diberikan apabila pengiriman bernilai <b>Late</b> dan RCA terverifikasi sebagai <b>kesalahan driver</b>. Jika kendala eksternal / bukan kesalahan driver, <b>tidak dikenakan sanksi</b>.
             </div>
 
             {vDriver?.gps && (

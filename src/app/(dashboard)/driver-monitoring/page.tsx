@@ -15,7 +15,7 @@ import ArmadaCctvModal from '@/components/monitoring/ArmadaCctvModal';
 
 export default function DriverMonitoringPage() {
   const {
-    drivers, shipments, rcaEvents, updateDriver, updateDriverStatus,
+    drivers, shipments, rcaEvents, updateDriver, updateDriverStatus, completeShipment,
     sendNotification, simulateLongStop, syncGpsLocations, addAudit,
   } = useData();
   const [syncingGps, setSyncingGps] = useState(false);
@@ -457,11 +457,37 @@ export default function DriverMonitoringPage() {
                     </p>
                   </div>
                 )}
-                <h4 className="font-semibold pt-2">Riwayat Perjalanan</h4>
-                <ul className="space-y-1">
+                <h4 className="font-semibold pt-2">Riwayat Perjalanan &amp; Standar Waktu</h4>
+                <ul className="space-y-1.5">
                   {shipments.filter(s => s.driverId === detail.id).map(s => (
-                    <li key={s.id} className="border rounded p-2 text-xs sm:text-sm">
-                      {s.suratJalanNo}: {s.origin} → {s.destination} ({s.isOnTime ? 'On Time' : 'Late'}) · {fmt(s.estimatedArrival)}
+                    <li key={s.id} className="border rounded-lg p-2.5 text-xs sm:text-sm space-y-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold">{s.suratJalanNo}: {s.origin} → {s.destination}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                          (s.ontimeStatus ?? (s.isOnTime ? 'Ontime' : 'Late')) === 'Ontime'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-red-100 text-red-700'
+                        }`}>
+                          {s.ontimeStatus ?? (s.isOnTime ? 'Ontime' : 'Late')}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        Sangu/Berangkat: {fmt(s.sanguTransferDate || s.departureTime)} · Tiba Bongkar:{' '}
+                        {fmt(s.arrivalUnloadDate || s.actualArrival)} · Standar {s.standardDays} hari
+                        {s.actualDays !== undefined ? ` · Aktual ${s.actualDays} hari` : ''}
+                      </p>
+                      {canEdit && s.status !== 'completed' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            completeShipment(s.id, new Date().toISOString(), actor);
+                            showToast(`Armada tiba di lokasi bongkar untuk ${s.suratJalanNo}. Status Ontime/Late & reward diperbarui.`);
+                          }}
+                          className="text-xs bg-[#0f2b5b] text-white px-2.5 py-1 rounded-md font-medium"
+                        >
+                          Catat Tiba Lokasi Bongkar (Sekarang)
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ul>

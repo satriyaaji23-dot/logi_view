@@ -357,6 +357,11 @@ export default function SettingsPage() {
                     {r.type === 'reward' ? 'Reward' : 'Punishment'}
                   </span>
                   {r.name}
+                  {r.perStandardDay && (
+                    <span className="ml-2 px-2 py-0.5 rounded-full text-[11px] bg-blue-100 text-blue-700 font-medium">
+                      × Standar Hari
+                    </span>
+                  )}
                 </p>
                 <p className="text-xs text-gray-500">{r.description}</p>
               </div>

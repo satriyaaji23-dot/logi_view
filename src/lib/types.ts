@@ -109,6 +109,8 @@ export interface Transporter {
   totalVehicles: number;
 }
 
+export type OntimeDeliveryStatus = 'Ontime' | 'Late';
+
 export interface Shipment {
   id: string;
   suratJalanNo: string;
@@ -118,9 +120,23 @@ export interface Shipment {
   transporterName: string;
   origin: string;
   destination: string;
+  /** Tanggal transfer sangu / tanggal berangkat ke lokasi bongkar */
+  sanguTransferDate?: string;
   departureTime: string;
   estimatedArrival: string;
+  /** Tanggal armada tiba di lokasi bongkar */
+  arrivalUnloadDate?: string;
   actualArrival?: string;
+  /** Standar waktu perjalanan yang ditentukan perusahaan (dalam hari) */
+  standardDays: number;
+  /** Lama perjalanan aktual (hari) dari tgl transfer sangu s.d. tiba di lokasi bongkar */
+  actualDays?: number;
+  /** Nilai Ontime Delivery: Ontime (lama <= standar) atau Late (lama > standar) */
+  ontimeStatus?: OntimeDeliveryStatus;
+  /** Tautan ke RCA jika shipment mengalami kendala / keterlambatan */
+  rcaEventId?: string;
+  /** Status kesalahan RCA pada shipment Late */
+  rcaFault?: 'none' | 'driver' | 'external' | 'pending';
   status: ShipmentStatus;
   driverStatus: DriverStatus;
   isOnTime: boolean;
@@ -220,6 +236,7 @@ export interface RCAEvent {
   isExternalCause: boolean;
   pointsDeducted?: number;
   notificationId?: string;
+  shipmentId?: string;
   createdAt: string;
 }
 
@@ -272,6 +289,8 @@ export interface RewardTransaction {
   reason: string;
   ruleId?: string;
   shipmentId?: string;
+  periodKey?: string;
+  standardDays?: number;
   createdAt: string;
   createdBy: string;
 }
@@ -284,6 +303,8 @@ export interface PunishmentTransaction {
   points: number;
   reason: string;
   rcaEventId?: string;
+  shipmentId?: string;
+  periodKey?: string;
   ruleId?: string;
   verifiedBefore: boolean;
   createdAt: string;
@@ -299,6 +320,8 @@ export interface RewardRule {
   isActive: boolean;
   isAutomatic: boolean;
   category?: RCACategory;
+  /** True jika poin reward dihitung dikalikan standar waktu (hari) per shipment */
+  perStandardDay?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -308,8 +331,17 @@ export type RewardStatus = 'menunggu_persetujuan' | 'disetujui' | 'sudah_diberik
 export const REWARD_STATUS_LABELS: Record<RewardStatus, string> = {
   menunggu_persetujuan: 'Menunggu Persetujuan',
   disetujui: 'Disetujui',
-  sudah_diberikan: 'Sudah Diberikan',
+  sudah_diberikan: 'Sudah Dicairkan',
 };
+
+export interface RewardPeriod {
+  key: string;
+  label: string;
+  startDate: string; // YYYY-MM-16
+  endDate: string;   // YYYY-MM-15
+  payoutDeadlineDate: string; // YYYY-MM-21
+  payoutDeadlineLabel: string;
+}
 
 export interface DriverReward {
   id: string;
@@ -317,8 +349,16 @@ export interface DriverReward {
   driverName: string;
   achievementType: string;
   period: string;
+  periodKey?: string;
+  payoutDeadline?: string;
+  paidAt?: string;
   onTimeDeliveries: number;
+  lateDeliveries?: number;
+  lateDriverFaultCount?: number;
   totalDeliveries: number;
+  standardDaysTotal?: number;
+  totalReward?: number;
+  totalSanction?: number;
   rewardPoints: number;
   rank: number;
   status: RewardStatus;

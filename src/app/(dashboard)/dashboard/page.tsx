@@ -229,8 +229,8 @@ function DriverDashboardView() {
                     {DRIVER_STATUS_LABELS[s.driverStatus]}
                   </span>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${s.isOnTime ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                  {s.isOnTime ? 'On Time' : 'Late'}
+                <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${(s.ontimeStatus ?? (s.isOnTime ? 'Ontime' : 'Late')) === 'Ontime' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                  {s.ontimeStatus ?? (s.isOnTime ? 'Ontime' : 'Late')}
                 </span>
               </div>
 
@@ -243,16 +243,18 @@ function DriverDashboardView() {
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-gray-500 pt-1 border-t border-gray-100">
                 <div>
-                  <span className="block text-[10px] text-gray-400">Berangkat</span>
-                  <span className="text-gray-700 font-medium">{fmt(s.departureTime)}</span>
+                  <span className="block text-[10px] text-gray-400">Sangu / Berangkat</span>
+                  <span className="text-gray-700 font-medium">{fmt(s.sanguTransferDate || s.departureTime)}</span>
                 </div>
                 <div>
-                  <span className="block text-[10px] text-gray-400">Estimasi Tiba</span>
-                  <span className="text-gray-700 font-medium">{fmt(s.estimatedArrival)}</span>
+                  <span className="block text-[10px] text-gray-400">Tiba Lokasi Bongkar</span>
+                  <span className="text-gray-700 font-medium">{fmt(s.arrivalUnloadDate || s.actualArrival)}</span>
                 </div>
                 <div>
-                  <span className="block text-[10px] text-gray-400">Durasi</span>
-                  <span className="text-gray-700 font-medium">{s.travelDuration ?? '-'}</span>
+                  <span className="block text-[10px] text-gray-400">Standar / Aktual</span>
+                  <span className="text-gray-700 font-medium">
+                    {s.standardDays} hr / {s.actualDays !== undefined ? `${s.actualDays} hr` : (s.travelDuration ?? '-')}
+                  </span>
                 </div>
                 <div>
                   <span className="block text-[10px] text-gray-400">Muatan</span>
