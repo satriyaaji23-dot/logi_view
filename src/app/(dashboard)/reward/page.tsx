@@ -16,7 +16,6 @@ import {
   extractDateOnly,
   formatTravelDaysLabel,
   getRewardPerDayPoints,
-  getTopRankBonusConfig,
   isDateInPeriod,
 } from '@/lib/scoring';
 
@@ -70,7 +69,6 @@ export default function RewardPage() {
   );
 
   const pointsPerDay = useMemo(() => getRewardPerDayPoints(rules), [rules]);
-  const topRankBonusCfg = useMemo(() => getTopRankBonusConfig(rules), [rules]);
 
   const periodSummaries = useMemo(() => {
     if (!activePeriod) return [];
@@ -196,13 +194,7 @@ export default function RewardPage() {
               </span>
               <h2 className="text-lg sm:text-xl font-bold mt-0.5">{activePeriod.label}</h2>
               <p className="text-xs text-blue-100 mt-0.5">
-                Tarif dasar <b className="text-white">{pointsPerDay} poin/hr</b> (skala jarak: ≤100 Km ×1 · 101–250 Km ×1.5 · 251–400 Km ×2 · &gt;400 Km ×2.5) ·{' '}
-                {topRankBonusCfg.isActive && (
-                  <>
-                    <b className="text-amber-200">Peringkat 1–{topRankBonusCfg.maxRank}: +{topRankBonusCfg.points} bonus</b> ·{' '}
-                  </>
-                )}
-                Sisanya tetap mendapat reward selama <b>Ontime</b> · Wajib istirahat per 2 jam / 100 Km.
+                Tarif dasar saat ini: <b className="text-white">{pointsPerDay} poin / hari standar waktu</b> untuk setiap shipment bernilai <b>Ontime</b>.
               </p>
             </div>
             <div className="flex flex-col sm:items-end gap-1.5">
@@ -228,8 +220,8 @@ export default function RewardPage() {
               <li>Ontime Delivery bernilai <b>Ontime</b> dan <b>Late</b>.</li>
               <li>Bernilai <b>Ontime</b> jika lama perjalanan &le; standar waktu yang ditentukan perusahaan.</li>
               <li>Bernilai <b>Late</b> jika lama perjalanan &gt; standar waktu yang ditentukan perusahaan.</li>
-              <li><b>Reward</b> diberikan apabila Ontime Delivery bernilai <b>Ontime</b> (disesuaikan jarak tujuan). Peringkat <b>1–{topRankBonusCfg.maxRank}</b> mendapat <b>reward tambahan +{topRankBonusCfg.points} poin</b>, sisanya tetap mendapat reward selama Ontime.</li>
-              <li><b>Sanksi (Punishment)</b> diberikan apabila <b>Late</b> (disesuaikan jarak tujuan) dan <b>RCA kesalahan driver</b>, atau <b>driver nakal</b> berhenti &gt; 2 jam tanpa alasan / melanggar istirahat wajib 2 jam per 100 Km.</li>
+              <li><b>Reward</b> diberikan apabila Ontime Delivery bernilai <b>Ontime</b>.</li>
+              <li><b>Sanksi</b> diberikan hanya apabila <b>Late</b> dan <b>RCA-nya merupakan kesalahan driver</b>.</li>
               <li>Periode perhitungan mulai <b>tanggal 16 bulan jalan s.d. tanggal 15 bulan berikutnya</b>.</li>
               <li>Reward dihitung berdasarkan <b>lamanya standar waktu (hari)</b> di setiap shipment.</li>
               <li>Setiap reward dan sanksi dilakukan <b>penjumlahan di akhir periode</b>.</li>
@@ -273,7 +265,7 @@ export default function RewardPage() {
               Penjumlahan Reward &amp; Sanksi Akhir Periode ({activePeriod?.label})
             </h2>
             <p className="text-xs text-gray-500">
-              Total Akhir = (Hari Standar Ontime × Tarif Jarak + Bonus Peringkat 1–{topRankBonusCfg.maxRank}) − Total Sanksi (Late &amp; Driver Nakal &gt; 2 Jam).
+              Total Akhir = (Total Hari Standar Shipment Ontime × {pointsPerDay} poin + Bonus) − Total Sanksi (Late &amp; RCA Kesalahan Driver).
             </p>
           </div>
           <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
@@ -290,18 +282,7 @@ export default function RewardPage() {
               <div key={s.driver.id} className="border border-gray-200 rounded-xl p-3.5 space-y-2 text-xs">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <p className="font-bold text-gray-900 text-sm">#{s.rank ?? idx + 1} {s.driver.name}</p>
-                      {s.isTop20 && s.rankBonusPoints > 0 ? (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800">
-                          Top 1–20 (+{s.rankBonusPoints})
-                        </span>
-                      ) : s.ontimeCount > 0 ? (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700">
-                          Reward Ontime Reguler
-                        </span>
-                      ) : null}
-                    </div>
+                    <p className="font-bold text-gray-900 text-sm">#{idx + 1} {s.driver.name}</p>
                     <p className="text-gray-500">{s.driver.transporterName} · {s.driver.vehiclePlate}</p>
                   </div>
                   {settlement && (
@@ -346,8 +327,8 @@ export default function RewardPage() {
             <thead className="bg-gray-50 text-xs uppercase text-gray-600">
               <tr>
                 {[
-                  'Rank', 'Driver', 'Kategori Peringkat', 'Ontime', 'Late (Salah Driver)',
-                  'Hari Standar', 'Bonus Top 1–20', 'Total Reward', 'Total Sanksi', 'Net Periode',
+                  'Rank', 'Driver', 'Mitra', 'Ontime', 'Late (Salah Driver)',
+                  'Total Hari Standar', 'Total Reward', 'Total Sanksi', 'Net Akhir Periode',
                   'Status Pencairan', 'Aksi',
                 ].map(h => (
                   <th key={h} className="px-3 py-2.5 text-left whitespace-nowrap">{h}</th>
@@ -360,35 +341,15 @@ export default function RewardPage() {
                 const next = settlement ? nextStatus[settlement.status] : null;
                 return (
                   <tr key={s.driver.id} className="border-t hover:bg-blue-50/30">
-                    <td className="px-3 py-2.5 font-bold">#{s.rank ?? i + 1}</td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      <p className="font-medium text-gray-900">{s.driver.name}</p>
-                      <p className="text-[11px] text-gray-400">{s.driver.transporterName}</p>
-                    </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      {s.isTop20 && s.rankBonusPoints > 0 ? (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">
-                          Peringkat 1–20 (+Bonus)
-                        </span>
-                      ) : s.ontimeCount > 0 ? (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-700">
-                          Reguler Ontime (Reward)
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-100 text-red-700">
-                          Late / Punishment
-                        </span>
-                      )}
-                    </td>
+                    <td className="px-3 py-2.5 font-bold">{i + 1}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap font-medium text-gray-900">{s.driver.name}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{s.driver.transporterName}</td>
                     <td className="px-3 py-2.5 text-emerald-700 font-semibold">{s.ontimeCount}</td>
                     <td className="px-3 py-2.5">
                       <span className="text-gray-800">{s.lateCount}</span>{' '}
                       <span className="text-xs text-red-600">({s.lateDriverFaultCount} salah driver)</span>
                     </td>
                     <td className="px-3 py-2.5 font-medium">{s.standardDaysOntime} hr</td>
-                    <td className="px-3 py-2.5 font-semibold text-amber-700">
-                      {s.rankBonusPoints > 0 ? `+${s.rankBonusPoints}` : '0'}
-                    </td>
                     <td className="px-3 py-2.5 text-emerald-700 font-semibold">+{s.totalReward}</td>
                     <td className="px-3 py-2.5 text-red-600 font-semibold">-{s.totalSanction}</td>
                     <td className={`px-3 py-2.5 font-bold ${s.netPeriodPoints >= 0 ? 'text-[#0f2b5b]' : 'text-red-600'}`}>
@@ -422,7 +383,7 @@ export default function RewardPage() {
               })}
               {!periodSummaries.length && (
                 <tr>
-                  <td colSpan={12} className="text-center text-gray-400 py-6">
+                  <td colSpan={11} className="text-center text-gray-400 py-6">
                     Belum ada shipment atau transaksi pada periode ini.
                   </td>
                 </tr>
@@ -462,10 +423,8 @@ export default function RewardPage() {
                 <div className="grid grid-cols-2 gap-1.5 bg-gray-50 rounded-lg p-2">
                   <span>Sangu/Berangkat: <b>{fmtDate(ev.shipment.sanguTransferDate || ev.shipment.departureTime)}</b></span>
                   <span>Tiba Bongkar: <b>{fmtDate(ev.shipment.arrivalUnloadDate || ev.shipment.actualArrival)}</b></span>
-                  <span>Jarak Tujuan: <b>{ev.distanceKm} Km</b></span>
-                  <span>Tier Jarak: <b>{ev.distanceTier.label}</b></span>
-                  <span>Standar / Aktual: <b>{ev.standardDays} hr / {formatTravelDaysLabel(ev.actualDays)}</b></span>
-                  <span>Wajib Istirahat: <b>{ev.distanceTier.requiredRestStops}× (per 100 Km)</b></span>
+                  <span>Standar: <b>{ev.standardDays} hari</b></span>
+                  <span>Aktual: <b>{formatTravelDaysLabel(ev.actualDays)}</b></span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${fault.cls}`}>{fault.label}</span>
@@ -487,9 +446,9 @@ export default function RewardPage() {
             <thead className="bg-gray-50 text-xs uppercase text-gray-600">
               <tr>
                 {[
-                  'Surat Jalan', 'Driver', 'Rute & Jarak', 'Tgl Sangu / Berangkat',
-                  'Tgl Tiba Bongkar', 'Standar / Aktual', 'Nilai',
-                  'Status RCA', 'Reward / Sanksi (Skala Jarak)',
+                  'Surat Jalan', 'Driver', 'Rute', 'Tgl Transfer Sangu / Berangkat',
+                  'Tgl Tiba Bongkar', 'Standar (Hari)', 'Aktual (Hari)', 'Nilai',
+                  'Status RCA', 'Reward / Sanksi',
                 ].map(h => (
                   <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>
                 ))}
@@ -503,10 +462,7 @@ export default function RewardPage() {
                     <td className="px-3 py-2 font-medium whitespace-nowrap">{ev.shipment.suratJalanNo}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{ev.shipment.driverName}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-600">
-                      <p>{ev.shipment.origin} → {ev.shipment.destination}</p>
-                      <p className="text-[11px] text-blue-700 font-medium">
-                        {ev.distanceKm} Km · {ev.distanceTier.label}
-                      </p>
+                      {ev.shipment.origin} → {ev.shipment.destination}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {fmtDate(ev.shipment.sanguTransferDate || ev.shipment.departureTime)}
@@ -514,9 +470,8 @@ export default function RewardPage() {
                     <td className="px-3 py-2 whitespace-nowrap">
                       {fmtDate(ev.shipment.arrivalUnloadDate || ev.shipment.actualArrival)}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <b>{ev.standardDays} hr</b> / {formatTravelDaysLabel(ev.actualDays)}
-                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap font-medium">{ev.standardDays} hari</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{formatTravelDaysLabel(ev.actualDays)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
                         ev.ontimeStatus === 'Ontime' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
@@ -531,11 +486,9 @@ export default function RewardPage() {
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap font-bold">
                       {ev.rewardPoints > 0 ? (
-                        <span className="text-emerald-700">
-                          +{ev.rewardPoints} ({ev.standardDays} hr × {ev.distanceTier.rewardPerDay}/hr)
-                        </span>
+                        <span className="text-emerald-700">+{ev.rewardPoints} ({ev.standardDays} hr × {pointsPerDay})</span>
                       ) : ev.sanctionPoints > 0 ? (
-                        <span className="text-red-600">-{ev.sanctionPoints} (Sanksi Jarak)</span>
+                        <span className="text-red-600">-{ev.sanctionPoints} (Sanksi)</span>
                       ) : (
                         <span className="text-gray-400">0</span>
                       )}
@@ -545,7 +498,7 @@ export default function RewardPage() {
               })}
               {!shipmentEvaluations.length && (
                 <tr>
-                  <td colSpan={9} className="text-center text-gray-400 py-6">
+                  <td colSpan={10} className="text-center text-gray-400 py-6">
                     Tidak ada shipment pada periode ini.
                   </td>
                 </tr>

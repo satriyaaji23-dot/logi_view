@@ -23,12 +23,6 @@ export interface GPSPosition {
   stoppedMinutes: number;
   lastUpdated: string;
   heading?: string;
-  /** Total jarak tempuh perjalanan saat ini (Km) untuk pemantauan istirahat per 100 Km */
-  distanceTraveledKm?: number;
-  /** Jarak tempuh sejak istirahat terakhir (Km); wajib istirahat <= 2 jam setiap 100 Km */
-  kmSinceLastRest?: number;
-  /** True jika berhenti saat ini merupakan istirahat wajib 100 Km yang sesuai aturan */
-  isAuthorizedRest?: boolean;
 }
 
 export interface ArmadaCCTV {
@@ -150,8 +144,6 @@ export interface Shipment {
   isOTIF: boolean;
   quantity: number;
   quantityReceived?: number;
-  /** Jarak rute tujuan pengiriman (Km) untuk penyesuaian tarif reward/punishment & wajib istirahat 100 Km */
-  distanceKm: number;
   travelDuration?: string;
   notes?: string;
 }
@@ -164,7 +156,6 @@ export type ShipmentStatus =
 
 export type RCACategory =
   | 'parkir_lama'
-  | 'berhenti_tanpa_alasan'
   | 'jadwal_bongkar'
   | 'rilisan'
   | 'ls_level_stock'
@@ -179,7 +170,6 @@ export type RCACategory =
 
 export const RCA_CATEGORY_LABELS: Record<RCACategory, string> = {
   parkir_lama: 'Parkir Lama',
-  berhenti_tanpa_alasan: 'Berhenti > 2 Jam Tanpa Alasan Jelas',
   jadwal_bongkar: 'Jadwal Bongkar',
   rilisan: 'Rilisan',
   ls_level_stock: 'LS / Level Stock',
@@ -332,9 +322,6 @@ export interface RewardRule {
   category?: RCACategory;
   /** True jika poin reward dihitung dikalikan standar waktu (hari) per shipment */
   perStandardDay?: boolean;
-  /** True jika reward tambahan khusus peringkat 1–20 */
-  isRankBonus?: boolean;
-  maxRank?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -372,8 +359,6 @@ export interface DriverReward {
   standardDaysTotal?: number;
   totalReward?: number;
   totalSanction?: number;
-  rankBonus?: number;
-  isTop20?: boolean;
   rewardPoints: number;
   rank: number;
   status: RewardStatus;

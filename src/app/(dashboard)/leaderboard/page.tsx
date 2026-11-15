@@ -5,13 +5,12 @@ import Link from 'next/link';
 import { Trophy } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
-import { sortDriversByScore, scorePerDelivery, evaluateRestCompliance, getTopRankBonusConfig } from '@/lib/scoring';
+import { sortDriversByScore, scorePerDelivery } from '@/lib/scoring';
 
 const PERIOD_FACTOR: Record<string, number> = { harian: 1 / 30, mingguan: 7 / 30, bulanan: 1 };
 
 export default function LeaderboardPage() {
-  const { drivers, rules } = useData();
-  const topRankCfg = useMemo(() => getTopRankBonusConfig(rules), [rules]);
+  const { drivers } = useData();
   const { user, hasRole } = useAuth();
   const isDriver = hasRole('driver');
   const [period, setPeriod] = useState('bulanan');
@@ -53,18 +52,7 @@ export default function LeaderboardPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs text-gray-500">Peringkat Anda ({period})</p>
-                <div className="flex flex-wrap items-center gap-2 mt-0.5">
-                  <p className="text-2xl font-bold text-[#0f2b5b]">#{myRankIndex + 1} dari {ranked.length} Driver</p>
-                  {myRankIndex + 1 <= topRankCfg.maxRank && topRankCfg.isActive ? (
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
-                      Peringkat 1–{topRankCfg.maxRank} (+{topRankCfg.points} Bonus Tambahan)
-                    </span>
-                  ) : (
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700">
-                      Reward Reguler Selama Ontime
-                    </span>
-                  )}
-                </div>
+                <p className="text-2xl font-bold text-[#0f2b5b]">#{myRankIndex + 1} dari {ranked.length} Driver</p>
               </div>
               <Trophy className="text-amber-500 shrink-0" size={32} />
             </div>
@@ -92,9 +80,7 @@ export default function LeaderboardPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Driver Leaderboard</h1>
-          <p className="text-xs sm:text-sm text-gray-500">
-            Peringkat 1–{topRankCfg.maxRank} mendapat reward tambahan (+{topRankCfg.points} poin); driver lain tetap mendapat reward selama Ontime, sedangkan Late terkena punishment sesuai jarak.
-          </p>
+          <p className="text-xs sm:text-sm text-gray-500">Skor Akhir = Total Reward − Total Punishment. Diperbarui otomatis setelah verifikasi.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <select value={period} onChange={e => setPeriod(e.target.value)} className="border rounded-lg px-3 py-2 text-sm bg-white">
@@ -129,66 +115,27 @@ export default function LeaderboardPage() {
       <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-gray-600 text-xs uppercase">
-            <tr>{['Rank', 'Kategori', 'Nama', 'Mitra', 'Total', 'On Time', 'Late', '% Tepat Waktu', 'Pelanggaran', 'Kepatuhan Istirahat 100 Km', 'Reward', 'Punishment', 'Skor Akhir', 'Skor/Kirim'].map(h => <th key={h} className="px-3 py-3 text-left whitespace-nowrap">{h}</th>)}</tr>
+            <tr>{['Rank', 'Foto', 'Nama', 'ID', 'Mitra', 'Total', 'On Time', 'Late', '% Tepat Waktu', 'Pelanggaran', 'Reward', 'Punishment', 'Skor Akhir', 'Skor/Kirim'].map(h => <th key={h} className="px-3 py-3 text-left whitespace-nowrap">{h}</th>)}</tr>
           </thead>
           <tbody>
-            {ranked.map((d, i) => {
-              const rankNum = i + 1;
-              const isTop = rankNum <= topRankCfg.maxRank && topRankCfg.isActive;
-              const rest = evaluateRestCompliance(d.gps);
-              const restBadgeCls =
-                rest.status === 'over_limit'
-                  ? 'bg-red-100 text-red-700'
-                  : rest.status === 'rest_required'
-                  ? 'bg-amber-100 text-amber-800'
-                  : 'bg-emerald-50 text-emerald-700';
-              return (
-                <tr key={d.id} className="border-t">
-                  <td className="px-3 py-2.5 font-bold">#{rankNum}</td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
-                    {isTop ? (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">
-                        Top 1–{topRankCfg.maxRank} (+Bonus)
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700">
-                        Reguler Ontime
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center text-[11px] font-semibold shrink-0">{initials(d.name)}</div>
-                      <div>
-                        <p className="font-medium text-gray-900">{d.name}</p>
-                        <p className="text-[11px] text-gray-400">{d.id} · {d.vehiclePlate}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">{d.transporterName}</td>
-                  <td className="px-3 py-2.5">{d.totalDeliveries}</td>
-                  <td className="px-3 py-2.5 text-green-700">{d.onTimeDeliveries}</td>
-                  <td className="px-3 py-2.5 text-red-600">{d.lateDeliveries}</td>
-                  <td className="px-3 py-2.5">{d.onTimePercentage}%</td>
-                  <td className="px-3 py-2.5">{d.validViolations}</td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${restBadgeCls}`}>
-                      {rest.status === 'over_limit'
-                        ? `Pelanggaran (>2 jam: ${rest.stoppedMinutes} mnt)`
-                        : rest.status === 'rest_required'
-                        ? `Wajib Istirahat (${rest.kmSinceLastRest} Km)`
-                        : rest.status === 'rest_compliant'
-                        ? `Istirahat Patuh (${rest.stoppedMinutes} mnt)`
-                        : `Normal (${rest.kmSinceLastRest}/100 Km)`}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-green-700">+{d.totalRewardPoints}</td>
-                  <td className="px-3 py-2.5 text-red-600">-{d.totalPunishmentPoints}</td>
-                  <td className="px-3 py-2.5 font-bold">{d.finalScore}</td>
-                  <td className="px-3 py-2.5">{scorePerDelivery(d)}</td>
-                </tr>
-              );
-            })}
+            {ranked.map((d, i) => (
+              <tr key={d.id} className="border-t">
+                <td className="px-3 py-2.5 font-bold">{i + 1}</td>
+                <td className="px-3 py-2.5"><div className="w-8 h-8 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center text-xs font-semibold">{initials(d.name)}</div></td>
+                <td className="px-3 py-2.5 whitespace-nowrap">{d.name}</td>
+                <td className="px-3 py-2.5">{d.id}</td>
+                <td className="px-3 py-2.5 whitespace-nowrap">{d.transporterName}</td>
+                <td className="px-3 py-2.5">{d.totalDeliveries}</td>
+                <td className="px-3 py-2.5 text-green-700">{d.onTimeDeliveries}</td>
+                <td className="px-3 py-2.5 text-red-600">{d.lateDeliveries}</td>
+                <td className="px-3 py-2.5">{d.onTimePercentage}%</td>
+                <td className="px-3 py-2.5">{d.validViolations}</td>
+                <td className="px-3 py-2.5 text-green-700">+{d.totalRewardPoints}</td>
+                <td className="px-3 py-2.5 text-red-600">-{d.totalPunishmentPoints}</td>
+                <td className="px-3 py-2.5 font-bold">{d.finalScore}</td>
+                <td className="px-3 py-2.5">{scorePerDelivery(d)}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

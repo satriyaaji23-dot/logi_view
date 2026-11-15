@@ -9,7 +9,6 @@ import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 import { mockTransporters } from '@/lib/mock-data';
 import { DRIVER_STATUS_COLORS, DRIVER_STATUS_LABELS, type Driver, type DriverStatus } from '@/lib/types';
-import { evaluateRestCompliance, getDistanceTierInfo } from '@/lib/scoring';
 import { loadIntegrationSettings } from '@/lib/integrations';
 import FleetGpsMap from '@/components/monitoring/FleetGpsMap';
 import ArmadaCctvModal from '@/components/monitoring/ArmadaCctvModal';
@@ -235,8 +234,7 @@ export default function DriverMonitoringPage() {
       {/* Mobile Card View */}
       <div className="md:hidden space-y-3">
         {rows.map(({ d, s }) => {
-          const rest = evaluateRestCompliance(d.gps);
-          const isLongStop = rest.status === 'over_limit';
+          const isLongStop = (d.gps?.stoppedMinutes ?? 0) > 120;
           return (
             <div key={d.id} className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
               <div className="flex items-start justify-between gap-2">
@@ -250,19 +248,13 @@ export default function DriverMonitoringPage() {
               </div>
 
               {d.gps && (
-                <div className={`text-xs rounded-lg p-2.5 border ${
-                  isLongStop
-                    ? 'bg-red-50 border-red-200 text-red-700'
-                    : rest.status === 'rest_required'
-                    ? 'bg-amber-50 border-amber-200 text-amber-800'
-                    : 'bg-blue-50/60 border-blue-100 text-gray-700'
-                }`}>
+                <div className={`text-xs rounded-lg p-2.5 border ${isLongStop ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50/60 border-blue-100 text-gray-700'}`}>
                   <div className="flex items-center justify-between gap-2 font-medium">
                     <span className="flex items-center gap-1 truncate"><MapPin size={12} /> {d.gps.locationName}</span>
                     <span className="shrink-0">{d.gps.speedKmh} km/j</span>
                   </div>
-                  <p className="text-[11px] opacity-90 mt-0.5">
-                    Berhenti: {d.gps.stoppedMinutes} mnt · {rest.label}
+                  <p className="text-[11px] opacity-80 mt-0.5">
+                    Berhenti: {d.gps.stoppedMinutes} menit {isLongStop ? '(> 2 Jam · Wajib RCA)' : ''}
                   </p>
                 </div>
               )}
@@ -270,12 +262,12 @@ export default function DriverMonitoringPage() {
               {s && (
                 <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-2.5 space-y-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-gray-800">{s.suratJalanNo} ({s.distanceKm} Km)</span>
+                    <span className="font-medium text-gray-800">{s.suratJalanNo}</span>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${s.isOnTime ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                       {s.isOnTime ? 'On Time' : 'Late'}
                     </span>
                   </div>
-                  <p>{s.origin} → {s.destination} · {getDistanceTierInfo(s.distanceKm).label}</p>
+                  <p>{s.origin} → {s.destination}</p>
                 </div>
               )}
 
@@ -343,8 +335,7 @@ export default function DriverMonitoringPage() {
           </thead>
           <tbody>
             {rows.map(({ d, s }) => {
-              const rest = evaluateRestCompliance(d.gps);
-              const isLongStop = rest.status === 'over_limit';
+              const isLongStop = (d.gps?.stoppedMinutes ?? 0) > 120;
               return (
                 <tr key={d.id} className="border-t hover:bg-blue-50/40">
                   <td className="px-3 py-2.5 font-medium">{d.id}</td>
@@ -360,13 +351,13 @@ export default function DriverMonitoringPage() {
                       <span className="truncate max-w-[180px]">{d.gps?.locationName ?? '-'}</span>
                     </button>
                     <span className="text-[11px] text-gray-400 block">
-                      {d.gps?.speedKmh ?? 0} km/jam · Jarak: {d.gps?.distanceTraveledKm ?? 0} Km
+                      {d.gps?.speedKmh ?? 0} km/jam
                     </span>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap text-xs">{d.transporterName}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap text-xs">
                     {s ? `${s.origin} → ${s.destination}` : '-'}
-                    {s && <span className="block text-[11px] text-gray-400">{s.suratJalanNo} · {s.distanceKm} Km</span>}
+                    {s && <span className="block text-[11px] text-gray-400">{s.suratJalanNo}</span>}
                   </td>
                   <td className="px-3 py-2.5">
                     <span className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${DRIVER_STATUS_COLORS[d.status]}`}>
@@ -374,20 +365,10 @@ export default function DriverMonitoringPage() {
                     </span>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className={`text-xs font-semibold ${isLongStop ? 'text-red-600' : rest.status === 'rest_required' ? 'text-amber-700' : 'text-gray-600'}`}>
-                      {d.gps?.stoppedMinutes ?? 0} mnt ({rest.kmSinceLastRest}/100 Km)
+                    <span className={`text-xs font-semibold ${isLongStop ? 'text-red-600' : 'text-gray-600'}`}>
+                      {d.gps?.stoppedMinutes ?? 0} mnt
                     </span>
-                    <span className={`block text-[10px] font-medium ${
-                      isLongStop ? 'text-red-500' : rest.status === 'rest_required' ? 'text-amber-600' : 'text-emerald-600'
-                    }`}>
-                      {isLongStop
-                        ? '> 2 Jam · Driver Nakal / Wajib RCA'
-                        : rest.status === 'rest_required'
-                        ? 'Wajib Istirahat (≥100 Km)'
-                        : rest.status === 'rest_compliant'
-                        ? 'Istirahat Patuh (≤2 Jam)'
-                        : 'Sesuai Aturan 100 Km'}
-                    </span>
+                    {isLongStop && <span className="block text-[10px] text-red-500 font-medium">&gt; 2 Jam</span>}
                   </td>
                   <td className="px-3 py-2.5">
                     {s ? (
@@ -491,7 +472,7 @@ export default function DriverMonitoringPage() {
                         </span>
                       </div>
                       <p className="text-xs text-gray-500">
-                        Jarak: <b>{s.distanceKm} Km</b> ({getDistanceTierInfo(s.distanceKm).label}) · Sangu/Berangkat: {fmt(s.sanguTransferDate || s.departureTime)} · Tiba Bongkar:{' '}
+                        Sangu/Berangkat: {fmt(s.sanguTransferDate || s.departureTime)} · Tiba Bongkar:{' '}
                         {fmt(s.arrivalUnloadDate || s.actualArrival)} · Standar {s.standardDays} hari
                         {s.actualDays !== undefined ? ` · Aktual ${s.actualDays} hari` : ''}
                       </p>
