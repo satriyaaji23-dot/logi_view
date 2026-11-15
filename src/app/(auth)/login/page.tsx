@@ -54,6 +54,33 @@ const DEMO_CREDENTIALS: DemoCredential[] = [
     badgeBg: 'bg-emerald-50 text-emerald-600 border-emerald-200',
     badgeText: 'text-emerald-600',
   },
+  {
+    roleLabel: 'Driver Simulasi 3',
+    subLabel: 'Arif Budiman (Top 1–20)',
+    username: 'driver3',
+    password: 'driver123',
+    icon: Truck,
+    badgeBg: 'bg-indigo-50 text-indigo-600 border-indigo-200',
+    badgeText: 'text-indigo-600',
+  },
+  {
+    roleLabel: 'Driver Simulasi 4',
+    subLabel: 'Rudi Hartono (Patuh 100 Km)',
+    username: 'driver4',
+    password: 'driver123',
+    icon: Truck,
+    badgeBg: 'bg-teal-50 text-teal-600 border-teal-200',
+    badgeText: 'text-teal-600',
+  },
+  {
+    roleLabel: 'Driver Simulasi 5',
+    subLabel: 'Tono Prasetyo (Berhenti >2 Jam)',
+    username: 'driver5',
+    password: 'driver123',
+    icon: Truck,
+    badgeBg: 'bg-red-50 text-red-600 border-red-200',
+    badgeText: 'text-red-600',
+  },
 ];
 
 export default function LoginPage() {
@@ -134,7 +161,7 @@ export default function LoginPage() {
         {/* Bottom Key Metrics */}
         <div className="relative z-10 grid grid-cols-3 gap-4 max-w-lg">
           <div className="bg-white/[0.06] backdrop-blur-sm border border-white/10 rounded-2xl px-5 py-4">
-            <p className="text-2xl xl:text-3xl font-extrabold text-sky-300 tracking-tight">12+</p>
+            <p className="text-2xl xl:text-3xl font-extrabold text-sky-300 tracking-tight">15+</p>
             <p className="text-blue-200/80 text-xs xl:text-sm font-medium mt-1">Driver Aktif</p>
           </div>
           <div className="bg-white/[0.06] backdrop-blur-sm border border-white/10 rounded-2xl px-5 py-4">
@@ -258,7 +285,7 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                 {DEMO_CREDENTIALS.map(cred => {
                   const Icon = cred.icon;
                   const isSelected = username === cred.username;
@@ -267,25 +294,23 @@ export default function LoginPage() {
                       key={cred.username}
                       type="button"
                       onClick={() => handleSelectDemo(cred)}
-                      className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      className={`w-full flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                         isSelected
                           ? 'bg-blue-50/70 border-blue-300 ring-2 ring-blue-500/10'
                           : 'bg-slate-50/80 hover:bg-slate-100/90 border-slate-200/70'
                       }`}
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         <div className={`w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${cred.badgeBg}`}>
                           <Icon size={14} />
                         </div>
-                        <div className="truncate">
-                          <p className="text-xs font-bold text-slate-800 leading-tight">
-                            {cred.roleLabel}{' '}
-                            <span className="font-normal text-slate-400">— {cred.subLabel}</span>
-                          </p>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-800 leading-tight">{cred.roleLabel}</p>
+                          <p className="text-[11px] text-slate-500 leading-snug break-words">{cred.subLabel}</p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <span className="px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[11px] font-mono font-semibold text-slate-700">
                           {cred.username}
                         </span>

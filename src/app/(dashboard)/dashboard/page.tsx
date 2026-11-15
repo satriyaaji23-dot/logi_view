@@ -22,6 +22,7 @@ import {
   NOTIFICATION_PRIORITY_COLORS,
   NOTIFICATION_PRIORITY_LABELS,
 } from '@/lib/types';
+import { evaluateRestCompliance, getDistanceTierInfo } from '@/lib/scoring';
 
 const COLORS = ['#0f2b5b', '#3b82f6', '#60a5fa', '#93c5fd', '#dc2626', '#f59e0b', '#10b981', '#64748b'];
 
@@ -186,31 +187,43 @@ function DriverDashboardView() {
         />
       </div>
 
-      {/* My GPS Position */}
-      {driver.gps && (
-        <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
-              <MapPin size={20} />
+      {/* My GPS Position & Mandatory Rest Compliance */}
+      {driver.gps && (() => {
+        const rest = evaluateRestCompliance(driver.gps);
+        const restCls =
+          rest.status === 'over_limit'
+            ? 'bg-red-50 border-red-200 text-red-700'
+            : rest.status === 'rest_required'
+            ? 'bg-amber-50 border-amber-200 text-amber-800'
+            : 'bg-emerald-50 border-emerald-200 text-emerald-700';
+        return (
+          <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
+                <MapPin size={20} />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-gray-500">Posisi GPS &amp; Aturan Wajib Istirahat (2 Jam / 100 Km)</p>
+                <p className="text-sm font-semibold text-gray-900">{driver.gps.locationName}</p>
+                <p className="text-xs text-gray-500 font-mono">
+                  {driver.gps.lat.toFixed(4)}, {driver.gps.lng.toFixed(4)} · {driver.gps.speedKmh} km/jam · Tempuh {driver.gps.distanceTraveledKm ?? 0} Km · Berhenti {driver.gps.stoppedMinutes} menit
+                </p>
+                <span className={`inline-block px-2.5 py-0.5 rounded-full border text-[11px] font-medium ${restCls}`}>
+                  {rest.label}
+                </span>
+              </div>
             </div>
-            <div>
-              <p className="text-xs text-gray-500">Posisi GPS Armada Saya</p>
-              <p className="text-sm font-semibold text-gray-900">{driver.gps.locationName}</p>
-              <p className="text-xs text-gray-500 mt-0.5 font-mono">
-                {driver.gps.lat.toFixed(4)}, {driver.gps.lng.toFixed(4)} · {driver.gps.speedKmh} km/jam · Berhenti {driver.gps.stoppedMinutes} menit
-              </p>
-            </div>
-          </div>
-          <a
-            href={`https://www.google.com/maps?q=${driver.gps.lat},${driver.gps.lng}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-3.5 py-2 rounded-lg text-center shrink-0"
-          >
-            Lihat di Peta
-          </a>
-        </section>
-      )}
+            <a
+              href={`https://www.google.com/maps?q=${driver.gps.lat},${driver.gps.lng}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-3.5 py-2 rounded-lg text-center shrink-0"
+            >
+              Lihat di Peta
+            </a>
+          </section>
+        );
+      })()}
 
       {/* My Shipments */}
       <section className="bg-white rounded-xl border border-gray-200 p-4">
@@ -234,11 +247,14 @@ function DriverDashboardView() {
                 </span>
               </div>
 
-              <div className="flex items-center gap-1.5 text-sm text-gray-700">
+              <div className="flex flex-wrap items-center gap-1.5 text-sm text-gray-700">
                 <MapPin size={14} className="text-blue-600 shrink-0" />
                 <span className="font-medium">{s.origin}</span>
                 <ArrowRight size={14} className="text-gray-400 shrink-0" />
                 <span className="font-medium">{s.destination}</span>
+                <span className="text-xs text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full font-medium">
+                  {s.distanceKm} Km · {getDistanceTierInfo(s.distanceKm).label}
+                </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-gray-500 pt-1 border-t border-gray-100">

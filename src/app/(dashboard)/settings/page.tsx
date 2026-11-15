@@ -346,8 +346,28 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="bg-white rounded-xl border border-gray-200 p-4">
-        <h2 className="font-semibold mb-3">Aturan Reward &amp; Punishment</h2>
+      <section className="bg-white rounded-xl border border-gray-200 p-4 space-y-4">
+        <h2 className="font-semibold">Aturan Reward, Punishment &amp; Skala Jarak Tujuan</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+          <div className="border border-blue-100 bg-blue-50/50 rounded-xl p-3 space-y-1">
+            <p className="font-semibold text-[#0f2b5b]">Skala Reward &amp; Sanksi Berdasarkan Jarak Tujuan</p>
+            <ul className="space-y-0.5 text-gray-700">
+              <li>• <b>Dekat (≤ 100 Km):</b> Reward ×1.0/hr · Sanksi ×0.8</li>
+              <li>• <b>Menengah (101–250 Km):</b> Reward ×1.5/hr · Sanksi ×1.2</li>
+              <li>• <b>Jauh (251–400 Km):</b> Reward ×2.0/hr · Sanksi ×1.6</li>
+              <li>• <b>Sangat Jauh (&gt; 400 Km):</b> Reward ×2.5/hr · Sanksi ×2.0</li>
+            </ul>
+          </div>
+          <div className="border border-amber-100 bg-amber-50/50 rounded-xl p-3 space-y-1">
+            <p className="font-semibold text-amber-900">Wajib Istirahat 2 Jam / 100 Km &amp; Peringkat 1–20</p>
+            <ul className="space-y-0.5 text-gray-700">
+              <li>• Pengemudi <b>wajib istirahat per 2 jam</b> setiap jarak tempuh <b>100 Km</b>.</li>
+              <li>• Berhenti <b>&gt; 2 jam tanpa alasan jelas</b> / melanggar aturan = <b>Punishment Driver Nakal</b>.</li>
+              <li>• <b>Peringkat 1–20:</b> Mendapat reward tambahan (+Bonus Top 20).</li>
+              <li>• <b>Peringkat &gt; 20:</b> Tetap mendapat reward selama <b>Ontime</b>; <b>Late</b> mendapat punishment.</li>
+            </ul>
+          </div>
+        </div>
         <div className="space-y-3">
           {rules.map(r => (
             <div key={r.id} className="border rounded-lg p-3 flex flex-wrap items-center justify-between gap-3">
@@ -359,7 +379,12 @@ export default function SettingsPage() {
                   {r.name}
                   {r.perStandardDay && (
                     <span className="ml-2 px-2 py-0.5 rounded-full text-[11px] bg-blue-100 text-blue-700 font-medium">
-                      × Standar Hari
+                      × Standar Hari &amp; Jarak
+                    </span>
+                  )}
+                  {r.isRankBonus && (
+                    <span className="ml-2 px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-800 font-medium">
+                      Top 1–{r.maxRank ?? 20}
                     </span>
                   )}
                 </p>

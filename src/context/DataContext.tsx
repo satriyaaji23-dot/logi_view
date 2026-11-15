@@ -14,6 +14,7 @@ import {
   buildDriverPeriodSummaries,
   calculateShipmentRewardPoints,
   computeActualTravelDays,
+  getDistanceTierInfo,
   getPunishmentPoints,
   getRewardPeriodForDate,
   getRewardPerDayPoints,
@@ -173,9 +174,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     punishedNotifIdsRef.current.add(notificationId);
 
     const rule =
+      rules.find(r => r.type === 'punishment' && r.isActive && r.category === 'berhenti_tanpa_alasan') ??
       rules.find(r => r.type === 'punishment' && r.isActive && r.category === 'parkir_lama') ??
       rules.find(r => r.type === 'punishment' && r.isActive);
-    const pts = rule?.points ?? 8;
+    const pts = rule?.points ?? 15;
     const nowIso = new Date().toISOString();
 
     setNotifications(prev => [
@@ -279,6 +281,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
                 stoppedMinutes,
                 lastUpdated: nowIso,
                 heading: d.gps?.heading ?? 'Timur',
+                distanceTraveledKm: d.gps?.distanceTraveledKm,
+                kmSinceLastRest: stoppedMinutes > 0 && stoppedMinutes <= LONG_STOP_THRESHOLD_MINUTES ? 0 : d.gps?.kmSinceLastRest,
+                isAuthorizedRest: stoppedMinutes > 0 && stoppedMinutes <= LONG_STOP_THRESHOLD_MINUTES,
               },
             }
           : d
@@ -386,6 +391,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
             stoppedMinutes: Number.isFinite(stoppedMinutes) ? stoppedMinutes : 0,
             lastUpdated: nowIso,
             heading: d.gps?.heading ?? 'Timur',
+            distanceTraveledKm: Number.isFinite(Number(match.distanceTraveledKm ?? match.distance_km))
+              ? Number(match.distanceTraveledKm ?? match.distance_km)
+              : d.gps?.distanceTraveledKm,
+            kmSinceLastRest: Number.isFinite(Number(match.kmSinceLastRest))
+              ? Number(match.kmSinceLastRest)
+              : d.gps?.kmSinceLastRest,
+            isAuthorizedRest:
+              typeof match.isAuthorizedRest === 'boolean'
+                ? match.isAuthorizedRest
+                : stoppedMinutes > 0 && stoppedMinutes <= thresholdMinutes
+                ? true
+                : d.gps?.isAuthorizedRest,
           },
         };
       })
@@ -486,7 +503,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       !ev.pointsDeducted &&
       !alreadyPunishedOnNotif;
     const rule = rules.find(r => r.type === 'punishment' && r.isActive && r.category === ev.category);
-    const pts = shouldPunish ? getPunishmentPoints(rules, ev.category) : 0;
+    const pts = shouldPunish ? getPunishmentPoints(rules, ev.category, linkedShipment?.distanceKm) : 0;
     const nowIso = new Date().toISOString();
     const period = getRewardPeriodForDate(
       linkedShipment?.arrivalUnloadDate || linkedShipment?.actualArrival || ev.eventDate
@@ -599,7 +616,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const ontimeStatus = actualDays <= standardDays ? 'Ontime' : 'Late';
     const isOnTime = ontimeStatus === 'Ontime';
     const pointsPerDay = getRewardPerDayPoints(rules);
-    const rewardPts = calculateShipmentRewardPoints(standardDays, ontimeStatus, pointsPerDay);
+    const distanceTier = getDistanceTierInfo(sh.distanceKm ?? 100, pointsPerDay);
+    const rewardPts = calculateShipmentRewardPoints(standardDays, ontimeStatus, pointsPerDay, sh.distanceKm);
     const period = getRewardPeriodForDate(arrivalUnloadDate);
     const nowIso = new Date().toISOString();
 
@@ -648,7 +666,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           points: rewardPts,
           standardDays,
           periodKey: period.key,
-          reason: `Ontime ${sh.suratJalanNo} (${actualDays} hr ≤ standar ${standardDays} hr × ${pointsPerDay} poin)`,
+          reason: `Ontime ${sh.suratJalanNo} (${sh.distanceKm ?? 100} Km ${distanceTier.label} • ${actualDays} hr ≤ standar ${standardDays} hr × ${distanceTier.rewardPerDay} poin)`,
           shipmentId: sh.id,
           createdAt: arrivalUnloadDate || nowIso,
           createdBy: actor,
@@ -721,7 +739,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           id: existing?.id ?? nid('DR'),
           driverId: s.driver.id,
           driverName: s.driver.name,
-          achievementType: 'Reward Ontime Delivery',
+          achievementType: s.isTop20 ? 'Reward Ontime + Bonus Top 1–20' : 'Reward Ontime Delivery',
           period: period.label,
           periodKey: period.key,
           payoutDeadline: period.payoutDeadlineDate,
@@ -734,7 +752,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
           totalReward: s.totalReward,
           totalSanction: s.totalSanction,
           rewardPoints: s.netPeriodPoints,
-          rank: idx + 1,
+          rank: s.rank ?? (idx + 1),
+          rankBonus: s.rankBonusPoints,
+          isTop20: s.isTop20,
           status: existing?.status ?? 'menunggu_persetujuan',
           approvedBy: existing?.approvedBy,
           approvedAt: existing?.approvedAt,
