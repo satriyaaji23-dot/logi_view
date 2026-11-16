@@ -18,9 +18,22 @@ import {
   getRewardPeriodForDate,
   getRewardPerDayPoints,
 } from '@/lib/scoring';
+import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
+import type { RealtimeEnvelope, SharedDataPayload } from '@/lib/realtimeStore';
 
 const LONG_STOP_THRESHOLD_MINUTES = 120; // > 2 jam
 const RCA_DEADLINE_MS = 30 * 60 * 1000; // 30 menit batas waktu isi RCA
+const REALTIME_STORAGE_KEY = 'silog_shared_state_v1';
+const REALTIME_CHANNEL_NAME = 'silog_realtime_v1';
+
+export type RealtimeStatus = 'connecting' | 'connected' | 'local';
+
+export interface RemoteNotice {
+  id: string;
+  actor: string;
+  summary: string;
+  timestamp: string;
+}
 
 interface NewRCAInput {
   driverId: string;
@@ -59,6 +72,12 @@ interface DataContextType {
     actor: string
   ) => void;
   updateDriverStatus: (driverId: string, status: DriverStatus, actor: string) => void;
+  /** Perbarui koordinat/kecepatan/status berhenti GPS driver secara realtime (dipicu dari Portal Driver atau Simulator). */
+  updateDriverGps: (
+    driverId: string,
+    gpsPatch: { lat?: number; lng?: number; locationName?: string; speedKmh?: number; stoppedMinutes?: number },
+    actor: string
+  ) => void;
   sendNotification: (driverId: string, title: string, description: string, priority: NotificationPriority, actor: string) => void;
   setNotificationHandling: (id: string, handlingStatus: Notification['handlingStatus']) => void;
   markNotificationRead: (id: string) => void;
@@ -73,6 +92,14 @@ interface DataContextType {
   adjustPoints: (driverId: string, points: number, reason: string, actor: string) => void;
   setDriverRewardStatus: (id: string, status: RewardStatus, actor: string) => void;
   addAudit: (action: string, entity: string, entityId: string, details: string, actor: string) => void;
+  /** Status dan metadata sinkronisasi realtime antar User Driver & User Admin */
+  realtimeStatus: RealtimeStatus;
+  realtimeTransport: string;
+  lastSyncAt: string | null;
+  lastSyncBy: string | null;
+  lastRemoteNotice: RemoteNotice | null;
+  dismissRemoteNotice: () => void;
+  resetDemoData: (actor: string) => void;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -107,8 +134,78 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting');
+  const [realtimeTransport, setRealtimeTransport] = useState<string>('Sinkronisasi Lokal (Multi-Tab)');
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [lastSyncBy, setLastSyncBy] = useState<string | null>(null);
+  const [lastRemoteNotice, setLastRemoteNotice] = useState<RemoteNotice | null>(null);
+  const [localMutation, setLocalMutation] = useState<{
+    seq: number;
+    actor: string;
+    summary: string;
+  } | null>(null);
+
   const initializedRef = useRef(false);
   const punishedNotifIdsRef = useRef<Set<string>>(new Set());
+  const clientIdRef = useRef<string>('');
+  const appliedVersionRef = useRef<number>(0);
+  const broadcastRef = useRef<BroadcastChannel | null>(null);
+  const supabaseChannelRef = useRef<ReturnType<NonNullable<typeof supabase>['channel']> | null>(null);
+
+  if (!clientIdRef.current) {
+    clientIdRef.current = `cli_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
+  }
+
+  const dismissRemoteNotice = useCallback(() => setLastRemoteNotice(null), []);
+
+  const schedulePublish = useCallback((actor: string, summary: string) => {
+    setLocalMutation(prev => ({
+      seq: (prev?.seq ?? 0) + 1,
+      actor,
+      summary,
+    }));
+  }, []);
+
+  const applyPayload = useCallback((data: SharedDataPayload) => {
+    setDrivers(data.drivers);
+    setShipments(data.shipments);
+    setRcaEvents(data.rcaEvents);
+    setRewardTx(data.rewardTransactions);
+    setPunishTx(data.punishmentTransactions);
+    setRules(data.rules);
+    setDriverRewards(data.driverRewards);
+    setNotifications(data.notifications);
+    setAuditLogs(data.auditLogs);
+  }, []);
+
+  const applyIncomingEnvelope = useCallback(
+    (envelope: RealtimeEnvelope, showNotice = true) => {
+      if (!envelope || !envelope.data) return;
+      if (envelope.clientId === clientIdRef.current) return;
+      if (envelope.version <= appliedVersionRef.current) return;
+
+      appliedVersionRef.current = envelope.version;
+      applyPayload(envelope.data);
+      setLastSyncAt(envelope.updatedAt);
+      setLastSyncBy(envelope.updatedBy);
+
+      try {
+        localStorage.setItem(REALTIME_STORAGE_KEY, JSON.stringify(envelope));
+      } catch {
+        // Abaikan bila quota penuh
+      }
+
+      if (showNotice && envelope.summary && envelope.summary !== '__silent__') {
+        setLastRemoteNotice({
+          id: `${envelope.version}`,
+          actor: envelope.updatedBy,
+          summary: envelope.summary,
+          timestamp: envelope.updatedAt,
+        });
+      }
+    },
+    [applyPayload]
+  );
 
   const addAudit = useCallback((action: string, entity: string, entityId: string, details: string, actor: string) => {
     setAuditLogs(prev => [{
@@ -117,52 +214,217 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }, ...prev]);
   }, []);
 
-  // Inisialisasi batas waktu RCA & deteksi awal armada yang berhenti > 2 jam
+  // Inisialisasi state bersama (localStorage + BroadcastChannel + SSE Server + Supabase Realtime)
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
 
-    const now = Date.now();
-    const defaultDeadline = new Date(now + RCA_DEADLINE_MS).toISOString();
-
-    setNotifications(prev => {
-      const updated = prev.map(n =>
-        n.requiresRca && !n.rcaDeadlineAt && !n.rcaSubmitted && !n.autoPunished
-          ? { ...n, rcaDeadlineAt: defaultDeadline }
-          : n
-      );
-
-      const generated: Notification[] = [];
-      for (const drv of mockDrivers) {
-        const stopped = drv.gps?.stoppedMinutes ?? 0;
-        if (stopped > LONG_STOP_THRESHOLD_MINUTES) {
-          const alreadyHasAlert = updated.some(
-            n => n.driverId === drv.id && n.type === 'long_stop' && n.requiresRca && !n.rcaSubmitted && !n.autoPunished
-          );
-          if (!alreadyHasAlert) {
-            generated.push({
-              id: nid('N'),
-              driverId: drv.id,
-              driverName: drv.name,
-              type: 'long_stop',
-              title: 'Berhenti Lama (> 2 Jam) — Wajib Isi RCA',
-              description: `GPS mendeteksi armada ${drv.vehiclePlate} berhenti ${formatMinutesLabel(stopped)} (${stopped} menit) di ${drv.gps?.locationName ?? 'lokasi terakhir'}. Driver wajib mengisi RCA sebelum batas waktu agar tidak terkena pengurangan poin otomatis.`,
-              location: drv.gps?.locationName,
-              priority: 'critical',
-              handlingStatus: 'belum_ditangani',
-              timestamp: new Date(now).toISOString(),
-              requiresRca: true,
-              stoppedDurationMinutes: stopped,
-              rcaDeadlineAt: defaultDeadline,
-              rcaSubmitted: false,
-              autoPunished: false,
-            });
-          }
+    let hydratedFromSaved = false;
+    try {
+      const raw = localStorage.getItem(REALTIME_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as RealtimeEnvelope;
+        if (parsed?.data?.drivers?.length) {
+          appliedVersionRef.current = parsed.version ?? 1;
+          applyPayload(parsed.data);
+          setLastSyncAt(parsed.updatedAt ?? null);
+          setLastSyncBy(parsed.updatedBy ?? null);
+          hydratedFromSaved = true;
         }
       }
-      return [...generated, ...updated];
-    });
-  }, []);
+    } catch {
+      // Gunakan data default
+    }
+
+    if (!hydratedFromSaved) {
+      const now = Date.now();
+      const defaultDeadline = new Date(now + RCA_DEADLINE_MS).toISOString();
+
+      setNotifications(prev => {
+        const updated = prev.map(n =>
+          n.requiresRca && !n.rcaDeadlineAt && !n.rcaSubmitted && !n.autoPunished
+            ? { ...n, rcaDeadlineAt: defaultDeadline }
+            : n
+        );
+
+        const generated: Notification[] = [];
+        for (const drv of mockDrivers) {
+          const stopped = drv.gps?.stoppedMinutes ?? 0;
+          if (stopped > LONG_STOP_THRESHOLD_MINUTES) {
+            const alreadyHasAlert = updated.some(
+              n => n.driverId === drv.id && n.type === 'long_stop' && n.requiresRca && !n.rcaSubmitted && !n.autoPunished
+            );
+            if (!alreadyHasAlert) {
+              generated.push({
+                id: nid('N'),
+                driverId: drv.id,
+                driverName: drv.name,
+                type: 'long_stop',
+                title: 'Berhenti Lama (> 2 Jam) — Wajib Isi RCA',
+                description: `GPS mendeteksi armada ${drv.vehiclePlate} berhenti ${formatMinutesLabel(stopped)} (${stopped} menit) di ${drv.gps?.locationName ?? 'lokasi terakhir'}. Driver wajib mengisi RCA sebelum batas waktu agar tidak terkena pengurangan poin otomatis.`,
+                location: drv.gps?.locationName,
+                priority: 'critical',
+                handlingStatus: 'belum_ditangani',
+                timestamp: new Date(now).toISOString(),
+                requiresRca: true,
+                stoppedDurationMinutes: stopped,
+                rcaDeadlineAt: defaultDeadline,
+                rcaSubmitted: false,
+                autoPunished: false,
+              });
+            }
+          }
+        }
+        return [...generated, ...updated];
+      });
+    }
+
+    // 1) Cross-tab BroadcastChannel + storage event listener
+    let bc: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      bc = new BroadcastChannel(REALTIME_CHANNEL_NAME);
+      broadcastRef.current = bc;
+      bc.onmessage = (ev: MessageEvent<RealtimeEnvelope>) => {
+        applyIncomingEnvelope(ev.data, true);
+      };
+    }
+
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === REALTIME_STORAGE_KEY && ev.newValue) {
+        try {
+          const parsed = JSON.parse(ev.newValue) as RealtimeEnvelope;
+          applyIncomingEnvelope(parsed, true);
+        } catch {
+          // Abaikan payload rusak
+        }
+      }
+    };
+    window.addEventListener('storage', onStorage);
+
+    // 2) Live Server SSE stream (/api/realtime/stream)
+    let eventSource: EventSource | null = null;
+    if (typeof EventSource !== 'undefined') {
+      eventSource = new EventSource('/api/realtime/stream');
+      eventSource.addEventListener('connected', () => {
+        setRealtimeStatus('connected');
+        if (!isSupabaseConfigured) {
+          setRealtimeTransport('Live Server (SSE + Multi-Tab)');
+        }
+      });
+      eventSource.addEventListener('sync', (ev: MessageEvent<string>) => {
+        try {
+          const envelope = JSON.parse(ev.data) as RealtimeEnvelope;
+          applyIncomingEnvelope(envelope, true);
+        } catch {
+          // Abaikan
+        }
+      });
+      eventSource.onerror = () => {
+        setRealtimeStatus('local');
+        if (!isSupabaseConfigured) {
+          setRealtimeTransport('Sinkronisasi Lokal (Multi-Tab)');
+        }
+      };
+    } else {
+      setRealtimeStatus('local');
+    }
+
+    // 3) Supabase Realtime (lintas perangkat di production / Vercel)
+    let supaChannel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
+    if (isSupabaseConfigured && supabase) {
+      supaChannel = supabase
+        .channel('silog-control-tower')
+        .on('broadcast', { event: 'state_sync' }, payload => {
+          const envelope = payload.payload as RealtimeEnvelope | undefined;
+          if (envelope) {
+            applyIncomingEnvelope(envelope, true);
+          }
+        })
+        .subscribe(status => {
+          if (status === 'SUBSCRIBED') {
+            setRealtimeStatus('connected');
+            setRealtimeTransport('Supabase Realtime + Live');
+          }
+        });
+      supabaseChannelRef.current = supaChannel;
+    }
+
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      if (bc) bc.close();
+      if (eventSource) eventSource.close();
+      if (supaChannel && supabase) {
+        supabase.removeChannel(supaChannel);
+      }
+    };
+  }, [applyIncomingEnvelope, applyPayload]);
+
+  // Publikasikan perubahan lokal ke seluruh channel realtime
+  useEffect(() => {
+    if (!localMutation) return;
+    const version = Math.max(Date.now(), appliedVersionRef.current + 1);
+    appliedVersionRef.current = version;
+    const updatedAt = new Date().toISOString();
+
+    const envelope: RealtimeEnvelope = {
+      version,
+      clientId: clientIdRef.current,
+      updatedAt,
+      updatedBy: localMutation.actor,
+      summary: localMutation.summary,
+      data: {
+        drivers,
+        shipments,
+        rcaEvents,
+        rewardTransactions,
+        punishmentTransactions,
+        rules,
+        driverRewards,
+        notifications,
+        auditLogs,
+      },
+    };
+
+    setLastSyncAt(updatedAt);
+    setLastSyncBy(localMutation.actor);
+
+    try {
+      localStorage.setItem(REALTIME_STORAGE_KEY, JSON.stringify(envelope));
+    } catch {
+      // Abaikan
+    }
+
+    try {
+      broadcastRef.current?.postMessage(envelope);
+    } catch {
+      // Abaikan
+    }
+
+    if (supabaseChannelRef.current) {
+      supabaseChannelRef.current.send({
+        type: 'broadcast',
+        event: 'state_sync',
+        payload: envelope,
+      }).catch(() => {});
+    }
+
+    fetch('/api/realtime/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(envelope),
+    }).catch(() => {});
+  }, [
+    localMutation,
+    drivers,
+    shipments,
+    rcaEvents,
+    rewardTransactions,
+    punishmentTransactions,
+    rules,
+    driverRewards,
+    notifications,
+    auditLogs,
+  ]);
 
   const triggerAutoPunishment = useCallback((notificationId: string, actor = 'Sistem (Auto-Punishment)') => {
     if (punishedNotifIdsRef.current.has(notificationId)) return;
@@ -234,7 +496,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       `Pengurangan otomatis -${pts} poin karena tidak mengisi RCA untuk notifikasi ${notif.id}`,
       actor
     );
-  }, [notifications, rules, addAudit]);
+    schedulePublish(actor, `Auto-punishment -${pts} poin untuk ${notif.driverName}`);
+  }, [notifications, rules, addAudit, schedulePublish]);
 
   // Pantau batas waktu RCA setiap 5 detik; bila lewat dan driver belum mengisi RCA -> auto punishment
   useEffect(() => {
@@ -319,10 +582,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         `Deteksi GPS berhenti ${stoppedMinutes} menit (> 2 jam) di ${loc}. Notifikasi wajib isi RCA dikirim ke ${drv.name}.`,
         actor
       );
+      schedulePublish(actor, `Alert berhenti > 2 jam dikirim ke ${drv.name}`);
     } else {
       addAudit('GPS_UPDATE', 'drivers', driverId, `Telemetry GPS diperbarui (berhenti ${stoppedMinutes} menit)`, actor);
+      schedulePublish(actor, `Posisi GPS ${drv.name} diperbarui`);
     }
-  }, [drivers, notifications, addAudit]);
+  }, [drivers, notifications, addAudit, schedulePublish]);
 
   const syncGpsLocations = useCallback((
     items: Array<Record<string, unknown>>,
@@ -395,8 +660,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setNotifications(prev => [...newAlerts, ...prev]);
     }
     addAudit('GPS_SYNC', 'drivers', 'fleet', `Sinkronisasi GPS API (${updatedCount} armada diperbarui)`, actor);
+    schedulePublish(actor, `Sinkronisasi GPS API (${updatedCount} armada)`);
     return updatedCount;
-  }, [notifications, addAudit]);
+  }, [notifications, addAudit, schedulePublish]);
 
   const addRCAEvent = useCallback((input: NewRCAInput, actor: string): RCAEvent => {
     const driver = drivers.find(d => d.id === input.driverId);
@@ -463,8 +729,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       `Kejadian ${input.category} dicatat untuk ${ev.driverName}${linkedShipment ? ` (${linkedShipment.suratJalanNo})` : ''}${matchedNotif ? ` (menjawab notifikasi ${matchedNotif.id})` : ''}`,
       actor
     );
+    schedulePublish(actor, `${ev.driverName} mengirim RCA (${ev.id})`);
     return ev;
-  }, [drivers, notifications, shipments, addAudit]);
+  }, [drivers, notifications, shipments, addAudit, schedulePublish]);
 
   const verifyRCAEvent = useCallback((id: string, status: VerificationStatus, decision: string, actor: string) => {
     const ev = rcaEvents.find(e => e.id === id);
@@ -587,7 +854,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
 
     addAudit('VERIFY', 'rca_events', id, `Status: ${status}. Keputusan: ${decision}. Sanksi poin: ${pts}`, actor);
-  }, [rcaEvents, notifications, shipments, rules, addAudit]);
+    schedulePublish(actor, `Verifikasi RCA ${id} (${ev.driverName})`);
+  }, [rcaEvents, notifications, shipments, rules, addAudit, schedulePublish]);
 
   const completeShipment = useCallback((shipmentId: string, arrivalUnloadDate: string, actor: string) => {
     const sh = shipments.find(s => s.id === shipmentId);
@@ -664,10 +932,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       `${sh.suratJalanNo} tiba di lokasi bongkar (${actualDays} hari vs standar ${standardDays} hari -> ${ontimeStatus}, reward +${rewardPts} poin)`,
       actor
     );
-  }, [shipments, rules, addAudit]);
+    schedulePublish(actor, `${sh.suratJalanNo} tiba di lokasi bongkar (${ontimeStatus})`);
+  }, [shipments, rules, addAudit, schedulePublish]);
 
   const updateDriverStatus = useCallback((driverId: string, status: DriverStatus, actor: string) => {
     setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, status } : d));
+    const drv = drivers.find(d => d.id === driverId);
 
     if (status === 'selesai_pengiriman') {
       const sh = shipments.find(s => s.driverId === driverId && s.status !== 'completed');
@@ -676,7 +946,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return;
       }
       const pointsPerDay = getRewardPerDayPoints(rules);
-      const drv = drivers.find(d => d.id === driverId);
       const nowIso = new Date().toISOString();
       const period = getRewardPeriodForDate(nowIso);
       setDrivers(prev => prev.map(d => d.id === driverId ? recompute({
@@ -688,7 +957,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setRewardTx(prev => [{
         id: nid('RT'), driverId, driverName: drv?.name ?? '-', type: 'reward', points: pointsPerDay,
         standardDays: 1, periodKey: period.key, reason: 'Pengiriman selesai Ontime (1 hari standar)',
-        createdAt: nowIso, createdBy: 'System',
+        createdAt: nowIso, createdBy: actor,
       }, ...prev]);
     } else {
       setShipments(prev => prev.map(s => s.driverId === driverId && s.status !== 'completed' ? {
@@ -696,7 +965,71 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } : s));
     }
     addAudit('UPDATE', 'drivers', driverId, `Status diubah menjadi ${status}`, actor);
-  }, [shipments, rules, drivers, completeShipment, addAudit]);
+    schedulePublish(actor, `Status ${drv?.name ?? driverId}: ${status.replace(/_/g, ' ')}`);
+  }, [shipments, rules, drivers, completeShipment, addAudit, schedulePublish]);
+
+  const updateDriverGps = useCallback((
+    driverId: string,
+    gpsPatch: { lat?: number; lng?: number; locationName?: string; speedKmh?: number; stoppedMinutes?: number },
+    actor: string
+  ) => {
+    const drv = drivers.find(d => d.id === driverId);
+    if (!drv) return;
+    const nowIso = new Date().toISOString();
+    const nextStopped = gpsPatch.stoppedMinutes ?? drv.gps?.stoppedMinutes ?? 0;
+    const nextLoc = gpsPatch.locationName?.trim() || drv.gps?.locationName || 'Lokasi Armada';
+
+    setDrivers(prev =>
+      prev.map(d =>
+        d.id === driverId
+          ? {
+              ...d,
+              gps: {
+                lat: gpsPatch.lat ?? d.gps?.lat ?? -7.2575,
+                lng: gpsPatch.lng ?? d.gps?.lng ?? 112.7521,
+                locationName: nextLoc,
+                speedKmh: gpsPatch.speedKmh ?? d.gps?.speedKmh ?? 0,
+                stoppedMinutes: nextStopped,
+                lastUpdated: nowIso,
+                heading: d.gps?.heading ?? 'Timur',
+              },
+            }
+          : d
+      )
+    );
+
+    if (nextStopped > LONG_STOP_THRESHOLD_MINUTES) {
+      const deadlineIso = new Date(Date.now() + RCA_DEADLINE_MS).toISOString();
+      const hasActiveAlert = notifications.some(
+        n => n.driverId === driverId && n.type === 'long_stop' && n.requiresRca && !n.rcaSubmitted && !n.autoPunished
+      );
+      if (!hasActiveAlert) {
+        setNotifications(prev => [
+          {
+            id: nid('N'),
+            driverId,
+            driverName: drv.name,
+            type: 'long_stop',
+            title: 'Berhenti Lama (> 2 Jam) — Wajib Isi RCA',
+            description: `GPS mendeteksi armada ${drv.vehiclePlate} berhenti ${formatMinutesLabel(nextStopped)} (${nextStopped} menit) di ${nextLoc}. Driver wajib mengisi RCA sebelum batas waktu atau poin otomatis dikurangi.`,
+            location: nextLoc,
+            priority: 'critical',
+            handlingStatus: 'belum_ditangani',
+            timestamp: nowIso,
+            requiresRca: true,
+            stoppedDurationMinutes: nextStopped,
+            rcaDeadlineAt: deadlineIso,
+            rcaSubmitted: false,
+            autoPunished: false,
+          },
+          ...prev,
+        ]);
+      }
+    }
+
+    addAudit('GPS_UPDATE', 'drivers', driverId, `Lokasi GPS live diperbarui: ${nextLoc}`, actor);
+    schedulePublish(actor, `Lokasi GPS ${drv.name} diperbarui (${nextLoc})`);
+  }, [drivers, notifications, addAudit, schedulePublish]);
 
   const finalizeRewardPeriod = useCallback((periodStartOrKey: string, actor: string) => {
     const startPart = periodStartOrKey.split('_')[0];
@@ -750,7 +1083,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       `Penjumlahan akhir periode ${period.label} (${summaries.length} driver) — batas pencairan ${period.payoutDeadlineLabel}`,
       actor
     );
-  }, [drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, addAudit]);
+    schedulePublish(actor, `Rekap akhir periode ${period.label} diperbarui`);
+  }, [drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, addAudit, schedulePublish]);
 
   const updateDriver = useCallback((
     driverId: string,
@@ -777,7 +1111,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       driverName: patch.name ?? n.driverName,
     } : n));
     addAudit('UPDATE', 'drivers', driverId, `Data driver diperbarui: ${Object.keys(patch).join(', ')}`, actor);
-  }, [drivers, addAudit]);
+    schedulePublish(actor, `Data driver ${patch.name ?? prevDriver.name} diperbarui`);
+  }, [drivers, addAudit, schedulePublish]);
 
   const sendNotification = useCallback((driverId: string, title: string, description: string, priority: NotificationPriority, actor: string) => {
     const drv = drivers.find(d => d.id === driverId);
@@ -786,22 +1121,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
       priority, handlingStatus: 'belum_ditangani', timestamp: new Date().toISOString(),
     }, ...prev]);
     addAudit('NOTIFY', 'notifications', driverId, `${title}: ${description}`, actor);
-  }, [drivers, addAudit]);
+    schedulePublish(actor, `Notifikasi dikirim ke ${drv?.name ?? driverId}`);
+  }, [drivers, addAudit, schedulePublish]);
 
   const setNotificationHandling = useCallback((id: string, handlingStatus: Notification['handlingStatus']) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, handlingStatus } : n));
-  }, []);
+    schedulePublish('Control Tower', '__silent__');
+  }, [schedulePublish]);
 
   const markNotificationRead = useCallback((id: string) => {
     setNotifications(prev =>
       prev.map(n => (n.id === id && !n.readAt ? { ...n, readAt: new Date().toISOString() } : n))
     );
-  }, []);
+    schedulePublish('User', '__silent__');
+  }, [schedulePublish]);
 
   const updateRule = useCallback((id: string, patch: Partial<RewardRule>, actor: string) => {
     setRules(prev => prev.map(r => r.id === id ? { ...r, ...patch, updatedAt: new Date().toISOString() } : r));
     addAudit('UPDATE', 'reward_rules', id, JSON.stringify(patch), actor);
-  }, [addAudit]);
+    schedulePublish(actor, 'Aturan reward & punishment diperbarui');
+  }, [addAudit, schedulePublish]);
 
   const adjustPoints = useCallback((driverId: string, points: number, reason: string, actor: string) => {
     const drv = drivers.find(d => d.id === driverId);
@@ -817,7 +1156,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setDrivers(prev => prev.map(d => d.id === driverId ? recompute({ ...d, totalPunishmentPoints: d.totalPunishmentPoints + p }) : d));
     }
     addAudit('ADJUST_POINTS', 'drivers', driverId, `${points > 0 ? '+' : ''}${points} poin. Alasan: ${reason}`, actor);
-  }, [drivers, addAudit]);
+    schedulePublish(actor, `Koreksi poin ${drv.name} (${points > 0 ? '+' : ''}${points})`);
+  }, [drivers, addAudit, schedulePublish]);
 
   const setDriverRewardStatus = useCallback((id: string, status: RewardStatus, actor: string) => {
     const nowIso = new Date().toISOString();
@@ -835,18 +1175,54 @@ export function DataProvider({ children }: { children: ReactNode }) {
       )
     );
     addAudit('UPDATE', 'driver_rewards', id, `Status pencairan reward: ${status}`, actor);
-  }, [addAudit]);
+    schedulePublish(actor, `Status pencairan reward diperbarui`);
+  }, [addAudit, schedulePublish]);
+
+  const resetDemoData = useCallback((actor: string) => {
+    punishedNotifIdsRef.current.clear();
+    const now = Date.now();
+    const defaultDeadline = new Date(now + RCA_DEADLINE_MS).toISOString();
+    const freshNotifications = mockNotifications.map(n =>
+      n.requiresRca && !n.rcaDeadlineAt && !n.rcaSubmitted && !n.autoPunished
+        ? { ...n, rcaDeadlineAt: defaultDeadline }
+        : n
+    );
+    applyPayload({
+      drivers: mockDrivers,
+      shipments: mockShipments,
+      rcaEvents: mockRCAEvents,
+      rewardTransactions: mockRewardTransactions,
+      punishmentTransactions: mockPunishmentTransactions,
+      rules: mockRewardRules,
+      driverRewards: mockDriverRewards,
+      notifications: freshNotifications,
+      auditLogs: [{
+        id: nid('AL'),
+        userId: actor,
+        userName: actor,
+        action: 'RESET_DEMO',
+        entity: 'system',
+        entityId: 'all',
+        details: 'Data simulasi realtime direset ke kondisi awal',
+        timestamp: new Date(now).toISOString(),
+      }],
+    });
+    fetch('/api/realtime/sync', { method: 'DELETE' }).catch(() => {});
+    schedulePublish(actor, 'Data simulasi direset ke kondisi awal');
+  }, [applyPayload, schedulePublish]);
 
   const value = useMemo(() => ({
     drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
     notifications, auditLogs, addRCAEvent, verifyRCAEvent, completeShipment, finalizeRewardPeriod,
-    updateDriver, updateDriverStatus, sendNotification, setNotificationHandling, markNotificationRead,
+    updateDriver, updateDriverStatus, updateDriverGps, sendNotification, setNotificationHandling, markNotificationRead,
     simulateLongStop, syncGpsLocations, triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
+    realtimeStatus, realtimeTransport, lastSyncAt, lastSyncBy, lastRemoteNotice, dismissRemoteNotice, resetDemoData,
   }), [
     drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
     notifications, auditLogs, addRCAEvent, verifyRCAEvent, completeShipment, finalizeRewardPeriod,
-    updateDriver, updateDriverStatus, sendNotification, setNotificationHandling, markNotificationRead,
+    updateDriver, updateDriverStatus, updateDriverGps, sendNotification, setNotificationHandling, markNotificationRead,
     simulateLongStop, syncGpsLocations, triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
+    realtimeStatus, realtimeTransport, lastSyncAt, lastSyncBy, lastRemoteNotice, dismissRemoteNotice, resetDemoData,
   ]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

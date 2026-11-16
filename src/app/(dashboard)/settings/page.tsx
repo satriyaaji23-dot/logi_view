@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Video, MapPin, Webhook, Eye, EyeOff, Save, CheckCircle2,
-  AlertCircle, PlugZap, ShieldCheck, KeyRound,
+  AlertCircle, PlugZap, ShieldCheck, KeyRound, Radio, RotateCcw,
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
@@ -18,7 +18,10 @@ import {
 type ServiceKey = 'cctv' | 'gps' | 'webhook';
 
 export default function SettingsPage() {
-  const { rules, updateRule, drivers, adjustPoints, auditLogs, addAudit } = useData();
+  const {
+    rules, updateRule, drivers, adjustPoints, auditLogs, addAudit,
+    realtimeStatus, realtimeTransport, lastSyncAt, lastSyncBy, resetDemoData,
+  } = useData();
   const { user, hasRole } = useAuth();
   const actor = user?.name ?? 'system';
   const [driverId, setDriverId] = useState('');
@@ -407,6 +410,26 @@ export default function SettingsPage() {
           <input value={reason} onChange={e => setReason(e.target.value)} placeholder="Alasan koreksi (wajib)" className="border rounded-lg px-3 py-2" />
           <button className="bg-[#0f2b5b] text-white rounded-lg px-4 py-2">Terapkan</button>
         </form>
+      </section>
+
+      <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="space-y-1">
+          <h2 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
+            <Radio size={17} className={realtimeStatus === 'connected' ? 'text-emerald-600' : 'text-blue-600'} />
+            Sinkronisasi Realtime (User Driver ↔ User Admin)
+          </h2>
+          <p className="text-xs text-gray-500">
+            Jalur aktif: <b className="text-gray-800">{realtimeTransport}</b>
+            {lastSyncAt ? ` · Pembaruan terakhir: ${new Date(lastSyncAt).toLocaleString('id-ID')} oleh ${lastSyncBy ?? '-'}` : ''}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => resetDemoData(actor)}
+          className="inline-flex items-center justify-center gap-1.5 border border-gray-200 hover:bg-gray-100 text-gray-700 text-xs sm:text-sm font-medium px-3.5 py-2 rounded-lg shrink-0"
+        >
+          <RotateCcw size={14} /> Reset Data Simulasi
+        </button>
       </section>
 
       <section className="bg-white rounded-xl border border-gray-200 p-4">

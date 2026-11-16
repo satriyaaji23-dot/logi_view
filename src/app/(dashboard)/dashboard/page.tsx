@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -8,7 +8,7 @@ import {
 import {
   Users, Truck, PackageCheck, Clock, Coffee, CheckCircle2, TimerOff, Target,
   AlertTriangle, ShieldAlert, Hourglass, Award, MapPin, Phone, CreditCard,
-  Building2, ArrowRight, Bell, ClipboardList,
+  Building2, ArrowRight, Bell, ClipboardList, Navigation, Radio,
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
@@ -16,6 +16,7 @@ import { otifDailyData, otifMonthlyData, onTimeVsLateData } from '@/lib/mock-dat
 import {
   DRIVER_STATUS_COLORS,
   DRIVER_STATUS_LABELS,
+  type DriverStatus,
   RCA_CATEGORY_LABELS,
   VERIFICATION_STATUS_COLORS,
   VERIFICATION_STATUS_LABELS,
@@ -62,8 +63,13 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
 }
 
 function DriverDashboardView() {
-  const { drivers, shipments, rcaEvents, notifications, rewardTransactions, punishmentTransactions } = useData();
+  const {
+    drivers, shipments, rcaEvents, notifications, rewardTransactions, punishmentTransactions,
+    updateDriverStatus, updateDriverGps, completeShipment, realtimeTransport,
+  } = useData();
   const { user } = useAuth();
+  const [driverToast, setDriverToast] = useState('');
+  const [sendingGps, setSendingGps] = useState(false);
 
   const driver = drivers.find(d => d.id === user?.driverId);
   const myShipments = shipments.filter(s => s.driverId === user?.driverId);
@@ -81,6 +87,64 @@ function DriverDashboardView() {
 
   const fmt = (t?: string) =>
     t ? new Date(t).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-';
+
+  const showDriverMsg = (msg: string) => {
+    setDriverToast(msg);
+    setTimeout(() => setDriverToast(''), 4000);
+  };
+
+  const handleSendLiveGps = () => {
+    if (!driver) return;
+    setSendingGps(true);
+    const actor = driver.name;
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          updateDriverGps(
+            driver.id,
+            {
+              lat: Number(pos.coords.latitude.toFixed(5)),
+              lng: Number(pos.coords.longitude.toFixed(5)),
+              speedKmh: Math.round((pos.coords.speed ?? 0) * 3.6) || 48,
+              stoppedMinutes: 0,
+              locationName: `GPS Perangkat Driver (${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)})`,
+            },
+            actor
+          );
+          setSendingGps(false);
+          showDriverMsg('Lokasi GPS live berhasil dikirim ke Control Tower.');
+        },
+        () => {
+          updateDriverGps(
+            driver.id,
+            {
+              lat: Number(((driver.gps?.lat ?? -7.1636) + 0.008).toFixed(5)),
+              lng: Number(((driver.gps?.lng ?? 112.5678) + 0.008).toFixed(5)),
+              speedKmh: 58,
+              stoppedMinutes: 0,
+              locationName: `${driver.gps?.locationName ?? 'Jalur Pengiriman'} (Bergerak Live)`,
+            },
+            actor
+          );
+          setSendingGps(false);
+          showDriverMsg('Posisi pergerakan armada dikirim ke Control Tower.');
+        },
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    } else {
+      updateDriverGps(
+        driver.id,
+        {
+          speedKmh: 55,
+          stoppedMinutes: 0,
+          locationName: `${driver.gps?.locationName ?? 'Dalam Perjalanan'} (Update Live)`,
+        },
+        actor
+      );
+      setSendingGps(false);
+      showDriverMsg('Status lokasi live dikirim ke Control Tower.');
+    }
+  };
 
   if (!driver) {
     return (
@@ -186,31 +250,75 @@ function DriverDashboardView() {
         />
       </div>
 
-      {/* My GPS Position */}
-      {driver.gps && (
-        <section className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
-              <MapPin size={20} />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500">Posisi GPS Armada Saya</p>
-              <p className="text-sm font-semibold text-gray-900">{driver.gps.locationName}</p>
-              <p className="text-xs text-gray-500 mt-0.5 font-mono">
-                {driver.gps.lat.toFixed(4)}, {driver.gps.lng.toFixed(4)} · {driver.gps.speedKmh} km/jam · Berhenti {driver.gps.stoppedMinutes} menit
-              </p>
-            </div>
-          </div>
-          <a
-            href={`https://www.google.com/maps?q=${driver.gps.lat},${driver.gps.lng}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-3.5 py-2 rounded-lg text-center shrink-0"
-          >
-            Lihat di Peta
-          </a>
-        </section>
+      {/* My GPS Position & Live Driver Controls */}
+      {driverToast && (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm px-4 py-2.5 rounded-xl">
+          {driverToast}
+        </div>
       )}
+
+      <section className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm sm:text-base font-semibold text-gray-900 flex items-center gap-2">
+              <Radio size={16} className="text-emerald-600" />
+              Update Status &amp; Lokasi Realtime Saya
+            </h2>
+            <p className="text-xs text-gray-500">
+              Setiap perubahan status dan lokasi langsung tersinkron ke Control Tower Admin ({realtimeTransport}).
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          <select
+            value={driver.status}
+            onChange={e => {
+              const nextSt = e.target.value as DriverStatus;
+              updateDriverStatus(driver.id, nextSt, driver.name);
+              showDriverMsg(`Status operasional diperbarui menjadi "${DRIVER_STATUS_LABELS[nextSt]}" dan dikirim ke Admin.`);
+            }}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white flex-1"
+            aria-label="Ubah status operasional driver"
+          >
+            {Object.entries(DRIVER_STATUS_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>{v}</option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            disabled={sendingGps}
+            onClick={handleSendLiveGps}
+            className="inline-flex items-center justify-center gap-1.5 bg-[#0f2b5b] hover:bg-[#1a3d7a] text-white text-xs sm:text-sm font-medium px-4 py-2 rounded-lg shrink-0 disabled:opacity-60"
+          >
+            <Navigation size={15} />
+            {sendingGps ? 'Mengambil GPS...' : 'Kirim Lokasi GPS Live'}
+          </button>
+        </div>
+
+        {driver.gps && (
+          <div className="pt-2 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-start gap-2.5">
+              <MapPin size={16} className="text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs sm:text-sm font-medium text-gray-900">{driver.gps.locationName}</p>
+                <p className="text-xs text-gray-500 font-mono">
+                  {driver.gps.lat.toFixed(4)}, {driver.gps.lng.toFixed(4)} · {driver.gps.speedKmh} km/jam · Berhenti {driver.gps.stoppedMinutes} menit
+                </p>
+              </div>
+            </div>
+            <a
+              href={`https://www.google.com/maps?q=${driver.gps.lat},${driver.gps.lng}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg text-center shrink-0"
+            >
+              Lihat di Peta
+            </a>
+          </div>
+        )}
+      </section>
 
       {/* My Shipments */}
       <section className="bg-white rounded-xl border border-gray-200 p-4">
@@ -262,6 +370,18 @@ function DriverDashboardView() {
                 </div>
               </div>
               {s.notes && <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5">Catatan: {s.notes}</p>}
+              {s.status !== 'completed' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    completeShipment(s.id, new Date().toISOString(), driver.name);
+                    showDriverMsg(`${s.suratJalanNo} ditandai tiba di lokasi bongkar dan disinkronkan ke Admin.`);
+                  }}
+                  className="text-xs font-medium bg-[#0f2b5b] hover:bg-[#1a3d7a] text-white px-3 py-1.5 rounded-lg"
+                >
+                  Tandai Tiba di Lokasi Bongkar
+                </button>
+              )}
             </div>
           ))}
           {!myShipments.length && (

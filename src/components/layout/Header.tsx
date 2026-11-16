@@ -1,16 +1,29 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { useData } from '@/context/DataContext';
-import { Bell, Menu, Search } from 'lucide-react';
+import { Bell, Menu, Radio, Search, X } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Header() {
   const { user } = useAuth();
   const { toggleMobileSidebar } = useApp();
-  const { notifications } = useData();
+  const {
+    notifications,
+    realtimeStatus,
+    realtimeTransport,
+    lastSyncBy,
+    lastRemoteNotice,
+    dismissRemoteNotice,
+  } = useData();
+
+  useEffect(() => {
+    if (!lastRemoteNotice) return;
+    const t = setTimeout(() => dismissRemoteNotice(), 5000);
+    return () => clearTimeout(t);
+  }, [lastRemoteNotice, dismissRemoteNotice]);
 
   const isDriver = user?.role === 'driver';
   const unreadCount = notifications.filter(
@@ -64,8 +77,31 @@ export default function Header() {
           )}
         </div>
 
-        {/* Right: Notifications + Profile */}
+        {/* Right: Realtime Status + Notifications + Profile */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div
+            title={`${realtimeTransport}${lastSyncBy ? ` · Terakhir oleh ${lastSyncBy}` : ''}`}
+            className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+              realtimeStatus === 'connected'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : realtimeStatus === 'local'
+                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                : 'bg-gray-50 text-gray-500 border-gray-200'
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                realtimeStatus === 'connected'
+                  ? 'bg-emerald-500 animate-pulse'
+                  : realtimeStatus === 'local'
+                  ? 'bg-blue-500 animate-pulse'
+                  : 'bg-gray-400'
+              }`}
+            />
+            <Radio size={12} />
+            <span>{realtimeStatus === 'connected' ? 'Live Sync' : realtimeStatus === 'local' ? 'Live Tab' : 'Menghubungkan'}</span>
+          </div>
+
           <Link
             href="/notifications"
             className="relative p-2 rounded-lg hover:bg-gray-100 text-gray-600 transition-colors"
@@ -92,6 +128,25 @@ export default function Header() {
           )}
         </div>
       </div>
+
+      {lastRemoteNotice && (
+        <div className="mt-2 bg-[#0f2b5b] text-white text-xs px-3 py-2 rounded-lg flex items-center justify-between gap-2 shadow-sm">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <p className="truncate">
+              <b>Update Realtime ({lastRemoteNotice.actor}):</b> {lastRemoteNotice.summary}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={dismissRemoteNotice}
+            className="text-blue-200 hover:text-white shrink-0"
+            aria-label="Tutup pemberitahuan realtime"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
     </header>
   );
 }
