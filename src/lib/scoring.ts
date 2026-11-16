@@ -11,9 +11,82 @@ import {
   type PunishmentTransaction,
   type RewardPeriod,
   type OntimeDeliveryStatus,
+  type LongStopActionLevel,
   EXTERNAL_RCA_CATEGORIES,
+  RCA_CATEGORY_LABELS,
   type RCACategory,
 } from './types';
+
+export interface OntimeRewardTier {
+  no: number;
+  minLabel: string;
+  maxLabel: string;
+  minDaysInclusive: number;
+  maxDaysInclusive: number | null;
+  rewardAmount: number;
+  sanctionAmount: number;
+}
+
+/**
+ * Tabel Tarif Reward Pencapaian Ontime Delivery (berdasarkan Standar Waktu Pengiriman / Hari)
+ */
+export const ONTIME_REWARD_TIERS: OntimeRewardTier[] = [
+  { no: 1, minLabel: '0', maxLabel: '1', minDaysInclusive: 0, maxDaysInclusive: 1, rewardAmount: 25000, sanctionAmount: 25000 },
+  { no: 2, minLabel: '> 1', maxLabel: '2', minDaysInclusive: 2, maxDaysInclusive: 2, rewardAmount: 45000, sanctionAmount: 45000 },
+  { no: 3, minLabel: '> 2', maxLabel: '3', minDaysInclusive: 3, maxDaysInclusive: 3, rewardAmount: 65000, sanctionAmount: 65000 },
+  { no: 4, minLabel: '> 3', maxLabel: '4', minDaysInclusive: 4, maxDaysInclusive: 4, rewardAmount: 85000, sanctionAmount: 85000 },
+  { no: 5, minLabel: '> 4', maxLabel: '5', minDaysInclusive: 5, maxDaysInclusive: 5, rewardAmount: 100000, sanctionAmount: 100000 },
+  { no: 6, minLabel: '> 5', maxLabel: 'Tak Hingga', minDaysInclusive: 6, maxDaysInclusive: null, rewardAmount: 150000, sanctionAmount: 150000 },
+];
+
+export interface LongStopPunishmentTier {
+  no: number;
+  minCount: number;
+  maxCount: number | null;
+  countLabel: string;
+  punishmentLabel: string;
+  actionLevel: LongStopActionLevel;
+  pointsDeducted: number;
+  fineAmount: number;
+}
+
+/**
+ * Tabel Punishment Driver Berhenti Lama (> 2 jam dalam 1 pengiriman tanpa alasan jelas)
+ * Sistem terpisah dari Reward/Sanksi Ontime Delivery.
+ */
+export const LONG_STOP_PUNISHMENT_TIERS: LongStopPunishmentTier[] = [
+  { no: 1, minCount: 1, maxCount: 1, countLabel: '1x', punishmentLabel: 'Peringatan melalui notifikasi apk/web', actionLevel: 'warning', pointsDeducted: 0, fineAmount: 0 },
+  { no: 2, minCount: 2, maxCount: 2, countLabel: '2x', punishmentLabel: 'Peringatan melalui notifikasi apk/web', actionLevel: 'warning', pointsDeducted: 0, fineAmount: 0 },
+  { no: 3, minCount: 3, maxCount: 3, countLabel: '3x', punishmentLabel: 'Peringatan melalui notifikasi apk/web dan akan dihubungi oleh tim control tower', actionLevel: 'call_ct', pointsDeducted: 0, fineAmount: 0 },
+  { no: 4, minCount: 4, maxCount: 4, countLabel: '4x', punishmentLabel: 'Driver mendapat surat peringatan', actionLevel: 'sp', pointsDeducted: 0, fineAmount: 0 },
+  { no: 5, minCount: 5, maxCount: 5, countLabel: '5x', punishmentLabel: 'Pengurangan point', actionLevel: 'point_deduction', pointsDeducted: 10, fineAmount: 0 },
+  { no: 6, minCount: 6, maxCount: 6, countLabel: '6x', punishmentLabel: 'Driver dirumahkan selama 2 hari dan terkena denda/punishment', actionLevel: 'suspend_2d', pointsDeducted: 15, fineAmount: 50000 },
+  { no: 7, minCount: 7, maxCount: null, countLabel: '>6x', punishmentLabel: 'Driver terkena skorsing atau dirumahkan 14 hari dan terkena denda/punishment', actionLevel: 'suspend_14d', pointsDeducted: 25, fineAmount: 100000 },
+];
+
+export function getOntimeTierByDays(standardDays: number): OntimeRewardTier {
+  const days = Math.max(1, Math.round(standardDays));
+  const match = ONTIME_REWARD_TIERS.find(
+    t => days >= t.minDaysInclusive && (t.maxDaysInclusive === null || days <= t.maxDaysInclusive)
+  );
+  return match ?? ONTIME_REWARD_TIERS[ONTIME_REWARD_TIERS.length - 1];
+}
+
+export function getLongStopPunishmentByCount(stopCountInShipment: number): LongStopPunishmentTier {
+  const count = Math.max(1, Math.round(stopCountInShipment));
+  const match = LONG_STOP_PUNISHMENT_TIERS.find(
+    t => count >= t.minCount && (t.maxCount === null || count <= t.maxCount)
+  );
+  return match ?? LONG_STOP_PUNISHMENT_TIERS[LONG_STOP_PUNISHMENT_TIERS.length - 1];
+}
+
+export function formatRupiah(amount: number, withSign = false): string {
+  const abs = Math.abs(Math.round(amount));
+  const formatted = abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  if (amount === 0) return 'Rp 0';
+  if (amount < 0) return `-Rp ${formatted}`;
+  return withSign ? `+Rp ${formatted}` : `Rp ${formatted}`;
+}
 
 const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
@@ -222,26 +295,30 @@ export function sortDriversByScore(drivers: Driver[]): Driver[] {
 }
 
 /**
- * Poin reward per hari standar waktu shipment (Ketentuan #8)
+ * Nilai reward pengiriman Ontime (berdasarkan tabel tier Standar Waktu Pengiriman / Hari)
  */
 export function getRewardPerDayPoints(rules: RewardRule[]): number {
   const rule =
     rules.find(r => r.type === 'reward' && r.perStandardDay && r.isActive) ??
     rules.find(r => r.type === 'reward' && r.name.toLowerCase().includes('ontime') && r.isActive) ??
     rules.find(r => r.type === 'reward' && r.name === 'Pengiriman Tepat Waktu' && r.isActive);
-  return rule?.points ?? 10;
+  return rule?.points ?? 25000;
 }
 
 /**
- * Hitung poin reward shipment: hanya diberikan bila Ontime, dikalikan standar waktu (hari).
+ * Hitung nilai reward shipment (Rp): hanya diberikan bila Ontime, sesuai tabel tier standar hari.
  */
 export function calculateShipmentRewardPoints(
   standardDays: number,
   ontimeStatus: OntimeDeliveryStatus,
-  pointsPerDay: number
+  _pointsPerDay?: number
 ): number {
   if (ontimeStatus !== 'Ontime') return 0;
-  return Math.max(1, standardDays) * pointsPerDay;
+  return getOntimeTierByDays(standardDays).rewardAmount;
+}
+
+export function getOntimeLateSanctionAmount(standardDays: number): number {
+  return getOntimeTierByDays(standardDays).sanctionAmount;
 }
 
 export function getOnTimeRewardPoints(rules: RewardRule[]): number {
@@ -249,9 +326,12 @@ export function getOnTimeRewardPoints(rules: RewardRule[]): number {
 }
 
 /**
- * Poin sanksi ketika pengiriman Late dan RCA merupakan kesalahan driver (Ketentuan #6)
+ * Poin/denda sanksi ketika pengiriman Late dan RCA merupakan kesalahan driver
  */
-export function getPunishmentPoints(rules: RewardRule[], category?: RCACategory): number {
+export function getPunishmentPoints(rules: RewardRule[], category?: RCACategory, standardDays?: number): number {
+  if (standardDays !== undefined) {
+    return getOntimeLateSanctionAmount(standardDays);
+  }
   if (category) {
     const catRule = rules.find(r => r.type === 'punishment' && r.category === category && r.isActive);
     if (catRule) return catRule.points;
@@ -259,7 +339,7 @@ export function getPunishmentPoints(rules: RewardRule[], category?: RCACategory)
   const lateDriverFaultRule = rules.find(
     r => r.type === 'punishment' && r.isActive && r.name.toLowerCase().includes('late')
   );
-  return lateDriverFaultRule?.points ?? 10;
+  return lateDriverFaultRule?.points ?? 25000;
 }
 
 export function formatScore(score: number): string {
@@ -277,9 +357,14 @@ export interface ShipmentRewardEvaluation {
   evalDate: string;
   actualDays: number | undefined;
   standardDays: number;
+  standardHours: number;
   ontimeStatus: OntimeDeliveryStatus;
   linkedRca?: RCAEvent;
   rcaFaultStatus: 'none' | 'driver' | 'external' | 'pending';
+  /** Diisi HANYA jika Late; kosong ('') jika Ontime */
+  rcaDisplay: string;
+  /** Diisi HANYA jika Late; kosong ('') jika Ontime */
+  keteranganDisplay: string;
   rewardPoints: number;
   sanctionPoints: number;
   netPoints: number;
@@ -311,12 +396,11 @@ export function evaluateShipmentsForPeriod(
   rules: RewardRule[],
   period: RewardPeriod
 ): ShipmentRewardEvaluation[] {
-  const pointsPerDay = getRewardPerDayPoints(rules);
-
   return shipments
     .map(sh => {
       const evalDate = sh.arrivalUnloadDate || sh.actualArrival || sh.sanguTransferDate || sh.departureTime;
       const { actualDays, ontimeStatus, standardDays } = evaluateShipmentOntime(sh);
+      const standardHours = sh.standardHours ?? standardDays * 24;
       const linkedRca =
         (sh.rcaEventId ? rcaEvents.find(r => r.id === sh.rcaEventId) : undefined) ??
         rcaEvents.find(r => r.shipmentId === sh.id);
@@ -340,13 +424,43 @@ export function evaluateShipmentsForPeriod(
         }
       }
 
-      const rewardPoints = calculateShipmentRewardPoints(standardDays, ontimeStatus, pointsPerDay);
+      const rewardPoints = calculateShipmentRewardPoints(standardDays, ontimeStatus);
       let sanctionPoints = 0;
       if (ontimeStatus === 'Late' && rcaFaultStatus === 'driver') {
         const matchedTx = punishmentTransactions.find(
-          t => (t.shipmentId && t.shipmentId === sh.id) || (linkedRca && t.rcaEventId === linkedRca.id)
+          t =>
+            t.categoryType !== 'long_stop' &&
+            ((t.shipmentId && t.shipmentId === sh.id) || (linkedRca && t.rcaEventId === linkedRca.id))
         );
-        sanctionPoints = matchedTx?.points ?? linkedRca?.pointsDeducted ?? getPunishmentPoints(rules, linkedRca?.category);
+        sanctionPoints = matchedTx?.points ?? getOntimeLateSanctionAmount(standardDays);
+      }
+
+      // Sesuai ketentuan revisi: RCA dan Keterangan HANYA diisi jika Late; kalau Ontime kosong!
+      let rcaDisplay = '';
+      let keteranganDisplay = '';
+      if (ontimeStatus === 'Late') {
+        rcaDisplay = linkedRca
+          ? `${RCA_CATEGORY_LABELS[linkedRca.category]} (${
+              rcaFaultStatus === 'driver'
+                ? 'Kesalahan Driver'
+                : rcaFaultStatus === 'external'
+                ? 'Bukan Kesalahan Driver'
+                : 'Menunggu Verifikasi'
+            })`
+          : rcaFaultStatus === 'driver'
+          ? 'Kesalahan Driver'
+          : 'Menunggu RCA';
+
+        keteranganDisplay =
+          sh.lateReasonNote ||
+          linkedRca?.controlTowerDecision ||
+          linkedRca?.description ||
+          sh.notes ||
+          (rcaFaultStatus === 'driver'
+            ? 'Terlambat akibat kesalahan driver (kena sanksi)'
+            : rcaFaultStatus === 'external'
+            ? 'Kendala eksternal / bukan kesalahan driver (bebas sanksi)'
+            : 'Menunggu verifikasi RCA oleh Admin');
       }
 
       return {
@@ -354,9 +468,12 @@ export function evaluateShipmentsForPeriod(
         evalDate,
         actualDays,
         standardDays,
+        standardHours,
         ontimeStatus,
         linkedRca,
         rcaFaultStatus,
+        rcaDisplay,
+        keteranganDisplay,
         rewardPoints,
         sanctionPoints,
         netPoints: rewardPoints - sanctionPoints,
@@ -367,7 +484,8 @@ export function evaluateShipmentsForPeriod(
 }
 
 /**
- * Penjumlahan akhir periode reward dan sanksi per driver (Ketentuan #7, #8, #9, #10).
+ * Penjumlahan akhir periode reward dan sanksi Ontime Delivery per driver.
+ * Sistem punishment berhenti lama (>2 jam) dipisahkan dari sistem Ontime/Late ini.
  */
 export function buildDriverPeriodSummaries(
   drivers: Driver[],
@@ -401,15 +519,16 @@ export function buildDriverPeriodSummaries(
         )
         .reduce((sum, t) => sum + t.points, 0);
 
-      // Sanksi: dari shipment Late+driver-fault + transaksi punishment non-shipment di periode ini (mis. auto-punishment tidak isi RCA)
+      // Sanksi Ontime Delivery (hanya dari shipment Late + kesalahan driver, BUKAN long-stop)
       const shipmentSanctionPoints = lateItems.reduce((sum, e) => sum + e.sanctionPoints, 0);
       const accountedRcaIds = new Set(lateItems.map(e => e.linkedRca?.id).filter(Boolean));
       const accountedShipmentIds = new Set(lateItems.map(e => e.shipment.id));
 
-      const extraPunishmentPoints = punishmentTransactions
+      const extraOntimePunishment = punishmentTransactions
         .filter(
           t =>
             t.driverId === driver.id &&
+            t.categoryType !== 'long_stop' &&
             !(t.shipmentId && accountedShipmentIds.has(t.shipmentId)) &&
             !(t.rcaEventId && accountedRcaIds.has(t.rcaEventId)) &&
             (t.periodKey ? t.periodKey === period.key : isDateInPeriod(t.createdAt, period))
@@ -417,7 +536,7 @@ export function buildDriverPeriodSummaries(
         .reduce((sum, t) => sum + t.points, 0);
 
       const totalReward = shipmentRewardPoints + bonusRewardPoints;
-      const totalSanction = shipmentSanctionPoints + extraPunishmentPoints;
+      const totalSanction = shipmentSanctionPoints + extraOntimePunishment;
 
       return {
         driver,

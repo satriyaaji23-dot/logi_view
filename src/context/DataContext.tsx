@@ -4,16 +4,19 @@ import React, { createContext, useContext, useState, useCallback, useMemo, useEf
 import {
   type Driver, type DriverStatus, type Shipment, type RCAEvent, type RCACategory, type VerificationStatus,
   type RewardTransaction, type PunishmentTransaction, type RewardRule, type DriverReward, type RewardStatus,
-  type Notification, type NotificationPriority, type AuditLog, EXTERNAL_RCA_CATEGORIES,
+  type Notification, type NotificationPriority, type AuditLog, type LongStopIncident, EXTERNAL_RCA_CATEGORIES,
 } from '@/lib/types';
 import {
   mockDrivers, mockShipments, mockRCAEvents, mockRewardTransactions, mockPunishmentTransactions,
-  mockRewardRules, mockDriverRewards, mockNotifications,
+  mockRewardRules, mockDriverRewards, mockNotifications, mockLongStopIncidents,
 } from '@/lib/mock-data';
 import {
   buildDriverPeriodSummaries,
   calculateShipmentRewardPoints,
   computeActualTravelDays,
+  formatRupiah,
+  getLongStopPunishmentByCount,
+  getOntimeLateSanctionAmount,
   getPunishmentPoints,
   getRewardPeriodForDate,
   getRewardPerDayPoints,
@@ -23,7 +26,7 @@ import type { RealtimeEnvelope, SharedDataPayload } from '@/lib/realtimeStore';
 
 const LONG_STOP_THRESHOLD_MINUTES = 120; // > 2 jam
 const RCA_DEADLINE_MS = 30 * 60 * 1000; // 30 menit batas waktu isi RCA
-const REALTIME_STORAGE_KEY = 'silog_shared_state_v1';
+const REALTIME_STORAGE_KEY = 'silog_shared_state_v2';
 const REALTIME_CHANNEL_NAME = 'silog_realtime_v1';
 
 export type RealtimeStatus = 'connecting' | 'connected' | 'local';
@@ -58,6 +61,16 @@ interface DataContextType {
   driverRewards: DriverReward[];
   notifications: Notification[];
   auditLogs: AuditLog[];
+  longStopIncidents: LongStopIncident[];
+  /** Catat pelanggaran berhenti lama (> 2 jam) dalam 1 pengiriman tanpa alasan jelas (sistem terpisah 1x..>6x). */
+  recordLongStopIncident: (
+    driverId: string,
+    stoppedMinutes: number,
+    location: string,
+    actor: string,
+    shipmentId?: string,
+    reasonNote?: string
+  ) => LongStopIncident | null;
   /** Tambah kejadian RCA. Kategori eksternal TIDAK mengurangi poin. Jika terkait notifikasi berhenti > 2 jam, otomatis tandai sudah diisi. */
   addRCAEvent: (input: NewRCAInput, actor: string) => RCAEvent;
   /** Verifikasi RCA oleh Admin. Sanksi diterapkan jika Late & RCA terbukti kesalahan driver. */
@@ -133,6 +146,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [driverRewards, setDriverRewards] = useState<DriverReward[]>(mockDriverRewards);
   const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [longStopIncidents, setLongStopIncidents] = useState<LongStopIncident[]>(mockLongStopIncidents);
 
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting');
   const [realtimeTransport, setRealtimeTransport] = useState<string>('Sinkronisasi Lokal (Multi-Tab)');
@@ -176,6 +190,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setDriverRewards(data.driverRewards);
     setNotifications(data.notifications);
     setAuditLogs(data.auditLogs);
+    if (Array.isArray(data.longStopIncidents)) {
+      setLongStopIncidents(data.longStopIncidents);
+    }
   }, []);
 
   const applyIncomingEnvelope = useCallback(
@@ -382,6 +399,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         driverRewards,
         notifications,
         auditLogs,
+        longStopIncidents,
       },
     };
 
@@ -424,7 +442,121 @@ export function DataProvider({ children }: { children: ReactNode }) {
     driverRewards,
     notifications,
     auditLogs,
+    longStopIncidents,
   ]);
+
+  const recordLongStopIncident = useCallback((
+    driverId: string,
+    stoppedMinutes: number,
+    location: string,
+    actor: string,
+    shipmentIdOverride?: string,
+    reasonNote?: string
+  ): LongStopIncident | null => {
+    const drv = drivers.find(d => d.id === driverId);
+    if (!drv) return null;
+
+    const targetShipment =
+      (shipmentIdOverride ? shipments.find(s => s.id === shipmentIdOverride) : undefined) ??
+      shipments.find(s => s.driverId === driverId && s.status !== 'completed') ??
+      shipments.find(s => s.driverId === driverId);
+
+    const shipmentId = targetShipment?.id ?? `SH-${driverId}`;
+    const shipmentCode = targetShipment?.suratJalanNo ?? `SH/${driverId}`;
+
+    const existingCount = longStopIncidents.filter(
+      inc => inc.shipmentId === shipmentId && inc.reasonStatus !== 'valid_external'
+    ).length;
+    const stopSequenceInShipment = existingCount + 1;
+    const tier = getLongStopPunishmentByCount(stopSequenceInShipment);
+    const nowIso = new Date().toISOString();
+
+    const incident: LongStopIncident = {
+      id: nid('LS'),
+      shipmentId,
+      shipmentCode,
+      driverId,
+      driverName: drv.name,
+      vehiclePlate: drv.vehiclePlate,
+      location,
+      stoppedMinutes,
+      occurredAt: nowIso,
+      reasonStatus: 'unexplained',
+      reasonNote: reasonNote || `Berhenti > 2 jam ke-${stopSequenceInShipment} pada ${shipmentCode} tanpa alasan jelas`,
+      stopSequenceInShipment,
+      punishmentTier: tier.punishmentLabel,
+      actionLevel: tier.actionLevel,
+      pointsDeducted: tier.pointsDeducted,
+      fineAmount: tier.fineAmount,
+    };
+
+    setLongStopIncidents(prev => [incident, ...prev]);
+
+    if (targetShipment) {
+      setShipments(prev =>
+        prev.map(s => (s.id === targetShipment.id ? { ...s, longStopCount: stopSequenceInShipment } : s))
+      );
+    }
+
+    setNotifications(prev => [
+      {
+        id: nid('N'),
+        driverId,
+        driverName: drv.name,
+        type: 'long_stop_escalation',
+        title: `Punishment Berhenti Lama (${stopSequenceInShipment}x pada ${shipmentCode})`,
+        description: `${tier.punishmentLabel}${tier.pointsDeducted > 0 ? ` (-${tier.pointsDeducted} poin)` : ''}${tier.fineAmount > 0 ? ` · Denda ${formatRupiah(tier.fineAmount)}` : ''}.`,
+        location,
+        priority: stopSequenceInShipment >= 3 ? 'critical' : 'warning',
+        handlingStatus: stopSequenceInShipment >= 3 ? 'belum_ditangani' : 'selesai',
+        timestamp: nowIso,
+      },
+      ...prev,
+    ]);
+
+    if (tier.pointsDeducted > 0 || tier.fineAmount > 0) {
+      setPunishTx(prev => [
+        {
+          id: nid('PT'),
+          driverId,
+          driverName: drv.name,
+          type: 'punishment',
+          categoryType: 'long_stop',
+          points: tier.pointsDeducted,
+          reason: `Punishment Berhenti Lama (${stopSequenceInShipment}x) pada ${shipmentCode}: ${tier.punishmentLabel}`,
+          shipmentId: targetShipment?.id,
+          periodKey: getRewardPeriodForDate(nowIso).key,
+          verifiedBefore: true,
+          createdAt: nowIso,
+          createdBy: actor,
+        },
+        ...prev,
+      ]);
+      if (tier.pointsDeducted > 0) {
+        setDrivers(prev =>
+          prev.map(d =>
+            d.id === driverId
+              ? recompute({
+                  ...d,
+                  totalPunishmentPoints: d.totalPunishmentPoints + tier.pointsDeducted,
+                  validViolations: d.validViolations + 1,
+                })
+              : d
+          )
+        );
+      }
+    }
+
+    addAudit(
+      'LONG_STOP_PUNISHMENT',
+      'shipments',
+      shipmentId,
+      `${drv.name} (${shipmentCode}) berhenti > 2 jam ke-${stopSequenceInShipment} tanpa alasan jelas -> ${tier.punishmentLabel}`,
+      actor
+    );
+    schedulePublish(actor, `Punishment berhenti lama ke-${stopSequenceInShipment} (${drv.name})`);
+    return incident;
+  }, [drivers, shipments, longStopIncidents, addAudit, schedulePublish]);
 
   const triggerAutoPunishment = useCallback((notificationId: string, actor = 'Sistem (Auto-Punishment)') => {
     if (punishedNotifIdsRef.current.has(notificationId)) return;
@@ -434,10 +566,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     punishedNotifIdsRef.current.add(notificationId);
 
-    const rule =
-      rules.find(r => r.type === 'punishment' && r.isActive && r.category === 'parkir_lama') ??
-      rules.find(r => r.type === 'punishment' && r.isActive);
-    const pts = rule?.points ?? 8;
+    const activeShipment =
+      shipments.find(s => s.driverId === notif.driverId && s.status !== 'completed') ??
+      shipments.find(s => s.driverId === notif.driverId);
+    const shipmentId = activeShipment?.id ?? `SH-${notif.driverId}`;
+    const shipmentCode = activeShipment?.suratJalanNo ?? `SH/${notif.driverId}`;
+
+    const existingCount = longStopIncidents.filter(
+      inc => inc.shipmentId === shipmentId && inc.reasonStatus !== 'valid_external' && inc.notificationId !== notificationId
+    ).length;
+    const stopSequenceInShipment = existingCount + 1;
+    const tier = getLongStopPunishmentByCount(stopSequenceInShipment);
     const nowIso = new Date().toISOString();
 
     setNotifications(prev => [
@@ -446,10 +585,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         driverId: notif.driverId,
         driverName: notif.driverName,
         type: 'auto_punishment',
-        title: `Pengurangan Poin Otomatis (-${pts} Poin)`,
-        description: `Anda tidak mengisi laporan RCA hingga batas waktu untuk kejadian berhenti lama (${notif.stoppedDurationMinutes ?? '>120'} menit) di ${notif.location ?? '-'}. Sistem otomatis mengurangi ${pts} poin.`,
+        title: `Berhenti Lama Tanpa Alasan Jelas (${stopSequenceInShipment}x — ${shipmentCode})`,
+        description: `Batas waktu pengisian RCA terlewati (${notif.stoppedDurationMinutes ?? '>120'} menit di ${notif.location ?? '-'}). Sanksi ke-${stopSequenceInShipment}: ${tier.punishmentLabel}.`,
         location: notif.location,
-        priority: 'critical',
+        priority: stopSequenceInShipment >= 3 ? 'critical' : 'warning',
         handlingStatus: 'selesai',
         timestamp: nowIso,
       },
@@ -460,44 +599,94 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ),
     ]);
 
-    setPunishTx(prev => [
-      {
-        id: nid('PT'),
-        driverId: notif.driverId,
-        driverName: notif.driverName,
-        type: 'punishment',
-        points: pts,
-        reason: `Otomatis: Tidak mengisi RCA setelah berhenti > 2 jam (${notif.id})`,
-        periodKey: getRewardPeriodForDate(nowIso).key,
-        ruleId: rule?.id,
-        verifiedBefore: false,
-        createdAt: nowIso,
-        createdBy: actor,
-      },
-      ...prev,
-    ]);
+    setLongStopIncidents(prev => {
+      const hasMatchingPending = prev.some(i => i.notificationId === notificationId);
+      if (hasMatchingPending) {
+        return prev.map(i =>
+          i.notificationId === notificationId
+            ? {
+                ...i,
+                reasonStatus: 'unexplained',
+                reasonNote: `Tidak mengisi RCA hingga batas waktu (${stopSequenceInShipment}x pada ${shipmentCode})`,
+                stopSequenceInShipment,
+                punishmentTier: tier.punishmentLabel,
+                actionLevel: tier.actionLevel,
+                pointsDeducted: tier.pointsDeducted,
+                fineAmount: tier.fineAmount,
+              }
+            : i
+        );
+      }
+      return [
+        {
+          id: nid('LS'),
+          shipmentId,
+          shipmentCode,
+          driverId: notif.driverId,
+          driverName: notif.driverName,
+          vehiclePlate: drivers.find(d => d.id === notif.driverId)?.vehiclePlate ?? '-',
+          location: notif.location ?? '-',
+          stoppedMinutes: notif.stoppedDurationMinutes ?? 135,
+          occurredAt: nowIso,
+          reasonStatus: 'unexplained',
+          reasonNote: `Tidak mengisi RCA hingga batas waktu (${stopSequenceInShipment}x pada ${shipmentCode})`,
+          stopSequenceInShipment,
+          punishmentTier: tier.punishmentLabel,
+          actionLevel: tier.actionLevel,
+          pointsDeducted: tier.pointsDeducted,
+          fineAmount: tier.fineAmount,
+          notificationId,
+        },
+        ...prev,
+      ];
+    });
 
-    setDrivers(prev =>
-      prev.map(d =>
-        d.id === notif.driverId
-          ? recompute({
-              ...d,
-              totalPunishmentPoints: d.totalPunishmentPoints + pts,
-              validViolations: d.validViolations + 1,
-            })
-          : d
-      )
-    );
+    if (activeShipment) {
+      setShipments(prev =>
+        prev.map(s => (s.id === activeShipment.id ? { ...s, longStopCount: stopSequenceInShipment } : s))
+      );
+    }
+
+    if (tier.pointsDeducted > 0) {
+      setPunishTx(prev => [
+        {
+          id: nid('PT'),
+          driverId: notif.driverId,
+          driverName: notif.driverName,
+          type: 'punishment',
+          categoryType: 'long_stop',
+          points: tier.pointsDeducted,
+          reason: `Punishment Berhenti Lama (${stopSequenceInShipment}x) pada ${shipmentCode}: ${tier.punishmentLabel}`,
+          shipmentId: activeShipment?.id,
+          periodKey: getRewardPeriodForDate(nowIso).key,
+          verifiedBefore: false,
+          createdAt: nowIso,
+          createdBy: actor,
+        },
+        ...prev,
+      ]);
+      setDrivers(prev =>
+        prev.map(d =>
+          d.id === notif.driverId
+            ? recompute({
+                ...d,
+                totalPunishmentPoints: d.totalPunishmentPoints + tier.pointsDeducted,
+                validViolations: d.validViolations + 1,
+              })
+            : d
+        )
+      );
+    }
 
     addAudit(
       'AUTO_PUNISHMENT',
       'drivers',
       notif.driverId,
-      `Pengurangan otomatis -${pts} poin karena tidak mengisi RCA untuk notifikasi ${notif.id}`,
+      `Berhenti lama tanpa RCA (${stopSequenceInShipment}x pada ${shipmentCode}): ${tier.punishmentLabel}`,
       actor
     );
-    schedulePublish(actor, `Auto-punishment -${pts} poin untuk ${notif.driverName}`);
-  }, [notifications, rules, addAudit, schedulePublish]);
+    schedulePublish(actor, `Punishment berhenti lama ${stopSequenceInShipment}x (${notif.driverName})`);
+  }, [notifications, shipments, longStopIncidents, drivers, addAudit, schedulePublish]);
 
   // Pantau batas waktu RCA setiap 5 detik; bila lewat dan driver belum mengisi RCA -> auto punishment
   useEffect(() => {
@@ -753,7 +942,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       !ev.pointsDeducted &&
       !alreadyPunishedOnNotif;
     const rule = rules.find(r => r.type === 'punishment' && r.isActive && r.category === ev.category);
-    const pts = shouldPunish ? getPunishmentPoints(rules, ev.category) : 0;
+    const pts = shouldPunish
+      ? getOntimeLateSanctionAmount(linkedShipment?.standardDays ?? 1)
+      : 0;
     const nowIso = new Date().toISOString();
     const period = getRewardPeriodForDate(
       linkedShipment?.arrivalUnloadDate || linkedShipment?.actualArrival || ev.eventDate
@@ -782,7 +973,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
           ? 'external'
           : 'pending';
       setShipments(prev =>
-        prev.map(s => (s.id === linkedShipment.id ? { ...s, rcaEventId: ev.id, rcaFault: nextFault } : s))
+        prev.map(s =>
+          s.id === linkedShipment.id
+            ? {
+                ...s,
+                rcaEventId: ev.id,
+                rcaFault: nextFault,
+                lateReasonNote: decision || ev.description || s.lateReasonNote,
+              }
+            : s
+        )
       );
     }
 
@@ -799,9 +999,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
           driverId: ev.driverId,
           driverName: ev.driverName,
           type: 'punishment',
+          categoryType: 'ontime_delivery',
           points: pts,
           reason: linkedShipment
-            ? `Sanksi Late ${linkedShipment.suratJalanNo} + RCA Kesalahan Driver (${rule?.name ?? ev.category}) - ${ev.id}`
+            ? `Sanksi Late ${linkedShipment.suratJalanNo} + RCA Kesalahan Driver (-${formatRupiah(pts)})`
             : `${rule?.name ?? ev.category} - ${ev.id}`,
           rcaEventId: ev.id,
           shipmentId: linkedShipment?.id,
@@ -886,6 +1087,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               driverStatus: 'selesai_pengiriman',
               travelDuration: actualDays === 0 ? '< 1 hari' : `${actualDays} hari`,
               rcaFault: isOnTime ? 'none' : (s.rcaFault ?? 'pending'),
+              lateReasonNote: isOnTime ? undefined : (s.lateReasonNote ?? 'Melebihi standar waktu pengiriman, menunggu verifikasi RCA'),
             }
           : s
       )
@@ -916,7 +1118,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           points: rewardPts,
           standardDays,
           periodKey: period.key,
-          reason: `Ontime ${sh.suratJalanNo} (${actualDays} hr ≤ standar ${standardDays} hr × ${pointsPerDay} poin)`,
+          reason: `Ontime ${sh.suratJalanNo} (${actualDays} hr ≤ standar ${standardDays} hr -> ${formatRupiah(rewardPts)})`,
           shipmentId: sh.id,
           createdAt: arrivalUnloadDate || nowIso,
           createdBy: actor,
@@ -929,7 +1131,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       'COMPLETE_SHIPMENT',
       'shipments',
       sh.id,
-      `${sh.suratJalanNo} tiba di lokasi bongkar (${actualDays} hari vs standar ${standardDays} hari -> ${ontimeStatus}, reward +${rewardPts} poin)`,
+      `${sh.suratJalanNo} tiba di lokasi bongkar (${actualDays} hari vs standar ${standardDays} hari -> ${ontimeStatus}, reward ${formatRupiah(rewardPts)})`,
       actor
     );
     schedulePublish(actor, `${sh.suratJalanNo} tiba di lokasi bongkar (${ontimeStatus})`);
@@ -1196,6 +1398,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       rules: mockRewardRules,
       driverRewards: mockDriverRewards,
       notifications: freshNotifications,
+      longStopIncidents: mockLongStopIncidents,
       auditLogs: [{
         id: nid('AL'),
         userId: actor,
@@ -1213,13 +1416,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(() => ({
     drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
-    notifications, auditLogs, addRCAEvent, verifyRCAEvent, completeShipment, finalizeRewardPeriod,
+    notifications, auditLogs, longStopIncidents, recordLongStopIncident, addRCAEvent, verifyRCAEvent, completeShipment, finalizeRewardPeriod,
     updateDriver, updateDriverStatus, updateDriverGps, sendNotification, setNotificationHandling, markNotificationRead,
     simulateLongStop, syncGpsLocations, triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
     realtimeStatus, realtimeTransport, lastSyncAt, lastSyncBy, lastRemoteNotice, dismissRemoteNotice, resetDemoData,
   }), [
     drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, driverRewards,
-    notifications, auditLogs, addRCAEvent, verifyRCAEvent, completeShipment, finalizeRewardPeriod,
+    notifications, auditLogs, longStopIncidents, recordLongStopIncident, addRCAEvent, verifyRCAEvent, completeShipment, finalizeRewardPeriod,
     updateDriver, updateDriverStatus, updateDriverGps, sendNotification, setNotificationHandling, markNotificationRead,
     simulateLongStop, syncGpsLocations, triggerAutoPunishment, updateRule, adjustPoints, setDriverRewardStatus, addAudit,
     realtimeStatus, realtimeTransport, lastSyncAt, lastSyncBy, lastRemoteNotice, dismissRemoteNotice, resetDemoData,

@@ -129,6 +129,8 @@ export interface Shipment {
   actualArrival?: string;
   /** Standar waktu perjalanan yang ditentukan perusahaan (dalam hari) */
   standardDays: number;
+  /** Standar waktu perjalanan dalam jam (mis. 1 hari = 24 jam) */
+  standardHours?: number;
   /** Lama perjalanan aktual (hari) dari tgl transfer sangu s.d. tiba di lokasi bongkar */
   actualDays?: number;
   /** Nilai Ontime Delivery: Ontime (lama <= standar) atau Late (lama > standar) */
@@ -137,6 +139,10 @@ export interface Shipment {
   rcaEventId?: string;
   /** Status kesalahan RCA pada shipment Late */
   rcaFault?: 'none' | 'driver' | 'external' | 'pending';
+  /** Keterangan khusus apabila status pengiriman Late (kosong bila Ontime) */
+  lateReasonNote?: string;
+  /** Jumlah kejadian berhenti lama (> 2 jam) tanpa alasan jelas dalam pengiriman ini */
+  longStopCount?: number;
   status: ShipmentStatus;
   driverStatus: DriverStatus;
   isOnTime: boolean;
@@ -302,6 +308,7 @@ export interface PunishmentTransaction {
   type: 'punishment';
   points: number;
   reason: string;
+  categoryType?: 'ontime_delivery' | 'long_stop' | 'manual';
   rcaEventId?: string;
   shipmentId?: string;
   periodKey?: string;
@@ -309,6 +316,37 @@ export interface PunishmentTransaction {
   verifiedBefore: boolean;
   createdAt: string;
   createdBy: string;
+}
+
+export type LongStopReasonStatus = 'pending' | 'valid_external' | 'unexplained';
+
+export type LongStopActionLevel =
+  | 'warning'
+  | 'call_ct'
+  | 'sp'
+  | 'point_deduction'
+  | 'suspend_2d'
+  | 'suspend_14d';
+
+export interface LongStopIncident {
+  id: string;
+  shipmentId: string;
+  shipmentCode: string;
+  driverId: string;
+  driverName: string;
+  vehiclePlate: string;
+  location: string;
+  stoppedMinutes: number;
+  occurredAt: string;
+  reasonStatus: LongStopReasonStatus;
+  reasonNote?: string;
+  stopSequenceInShipment: number;
+  punishmentTier: string;
+  actionLevel: LongStopActionLevel;
+  pointsDeducted: number;
+  fineAmount: number;
+  notificationId?: string;
+  rcaEventId?: string;
 }
 
 export interface RewardRule {

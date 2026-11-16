@@ -361,7 +361,7 @@ function DriverDashboardView() {
                 <div>
                   <span className="block text-[10px] text-gray-400">Standar / Aktual</span>
                   <span className="text-gray-700 font-medium">
-                    {s.standardDays} hr / {s.actualDays !== undefined ? `${s.actualDays} hr` : (s.travelDuration ?? '-')}
+                    {s.standardDays} hr ({s.standardHours ?? s.standardDays * 24} jam) / {s.actualDays !== undefined ? `${s.actualDays} hr` : (s.travelDuration ?? '-')}
                   </span>
                 </div>
                 <div>

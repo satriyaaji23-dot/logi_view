@@ -8,6 +8,7 @@ import {
   type DriverReward,
   type Notification,
   type AuditLog,
+  type LongStopIncident,
 } from './types';
 
 export interface SharedDataPayload {
@@ -20,6 +21,7 @@ export interface SharedDataPayload {
   driverRewards: DriverReward[];
   notifications: Notification[];
   auditLogs: AuditLog[];
+  longStopIncidents?: LongStopIncident[];
 }
 
 export interface RealtimeEnvelope {

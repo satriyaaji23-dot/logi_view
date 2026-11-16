@@ -65,7 +65,7 @@ export default function Sidebar() {
         { label: 'Dashboard Saya', href: '/dashboard', icon: <LayoutDashboard size={20} />, roles: ['driver'] },
         { label: 'Notifikasi', href: '/notifications', icon: <Bell size={20} />, roles: ['driver'], badge: relevantUnreadCount },
         { label: 'Kejadian / RCA', href: '/rca', icon: <ClipboardList size={20} />, roles: ['driver'] },
-        { label: 'Reward & Poin', href: '/reward', icon: <Gift size={20} />, roles: ['driver'] },
+        { label: 'Reward & Punishment', href: '/reward', icon: <Gift size={20} />, roles: ['driver'] },
       ]
     : [
         { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard size={20} />, roles: ['admin', 'supervisor'] },
@@ -73,7 +73,7 @@ export default function Sidebar() {
         { label: 'Notifikasi', href: '/notifications', icon: <Bell size={20} />, roles: ['admin', 'supervisor'], badge: relevantUnreadCount },
         { label: 'RCA / Kejadian', href: '/rca', icon: <ClipboardList size={20} />, roles: ['admin', 'supervisor'] },
         { label: 'Leaderboard', href: '/leaderboard', icon: <Trophy size={20} />, roles: ['admin', 'supervisor'] },
-        { label: 'Reward', href: '/reward', icon: <Gift size={20} />, roles: ['admin', 'supervisor'] },
+        { label: 'Reward & Punishment', href: '/reward', icon: <Gift size={20} />, roles: ['admin', 'supervisor'] },
         { label: 'Laporan', href: '/reports', icon: <FileText size={20} />, roles: ['admin', 'supervisor'] },
         { label: 'Pengaturan & API', href: '/settings', icon: <Settings size={20} />, roles: ['admin'] },
       ];

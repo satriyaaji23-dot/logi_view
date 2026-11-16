@@ -11,6 +11,7 @@ import {
   collectAvailablePeriods,
   evaluateShipmentOntime,
   extractDateOnly,
+  formatRupiah,
   formatTravelDaysLabel,
 } from '@/lib/scoring';
 
@@ -46,17 +47,27 @@ export default function ReportsPage() {
     const dOk = (id: string) => (!driverId || id === driverId) && (!mitra || drivers.find(d => d.id === id)?.transporterName === mitra);
     switch (type) {
       case 'otif': return {
-        headers: ['Surat Jalan', 'Driver', 'Mitra', 'Tujuan', 'Tgl Transfer Sangu / Berangkat', 'Tgl Tiba Bongkar', 'Standar (Hari)', 'Aktual (Hari)', 'Nilai', 'OTIF'],
+        headers: ['Kode Shipment', 'Driver', 'Rute & Standar Waktu', 'Tgl Berangkat / Sangu', 'Tgl & Jam Tiba', 'Aktual', 'Nilai', 'RCA (Jika Late)', 'Keterangan (Jika Late)'],
         rows: shipments.filter(s => dOk(s.driverId) && inRange(s.sanguTransferDate || s.departureTime)).map(s => {
           const ev = evaluateShipmentOntime(s);
+          const isLate = ev.ontimeStatus === 'Late';
+          const linkedRca = (s.rcaEventId ? rcaEvents.find(r => r.id === s.rcaEventId) : undefined) ?? rcaEvents.find(r => r.shipmentId === s.id);
+          const rcaCol = isLate ? (linkedRca ? `${RCA_CATEGORY_LABELS[linkedRca.category]} (${s.rcaFault === 'driver' ? 'Salah Driver' : s.rcaFault === 'external' ? 'Eksternal' : 'Cek'})` : 'Menunggu RCA') : '';
+          const ketCol = isLate ? (s.lateReasonNote || linkedRca?.controlTowerDecision || s.notes || '-') : '';
+          const arr = s.arrivalUnloadDate || s.actualArrival;
+          const arrFmt = arr ? `${extractDateOnly(arr)} ${arr.includes('T') ? arr.slice(11, 16) : ''}`.trim() : '-';
+          const dep = s.sanguTransferDate || s.departureTime;
+          const depFmt = dep ? `${extractDateOnly(dep)} ${dep.includes('T') ? dep.slice(11, 16) : ''}`.trim() : '-';
           return [
-            s.suratJalanNo, s.driverName, s.transporterName, s.destination,
-            extractDateOnly(s.sanguTransferDate || s.departureTime) || '-',
-            extractDateOnly(s.arrivalUnloadDate || s.actualArrival) || '-',
-            `${ev.standardDays} hari`,
+            s.suratJalanNo,
+            s.driverName,
+            `${s.origin} – ${s.destination} (${ev.standardDays} hr / ${s.standardHours ?? ev.standardDays * 24} jam)`,
+            depFmt,
+            arrFmt,
             formatTravelDaysLabel(ev.actualDays),
             ev.ontimeStatus,
-            s.isOTIF ? 'Ya' : 'Tidak',
+            rcaCol,
+            ketCol,
           ];
         }),
       };
@@ -67,11 +78,13 @@ export default function ReportsPage() {
           drivers, shipments, rcaEvents, rewardTransactions, punishmentTransactions, rules, activePeriod
         ).filter(s => dOk(s.driver.id) && (s.totalShipments > 0 || s.totalReward > 0 || s.totalSanction > 0));
         return {
-          headers: ['Periode (16–15)', 'Batas Pencairan', 'Driver', 'Mitra', 'Ontime', 'Late (Salah Driver)', 'Hari Standar (Ontime)', 'Total Reward', 'Total Sanksi', 'Net Akhir Periode'],
+          headers: ['Periode (16–15)', 'Batas Pencairan', 'Driver', 'Mitra', 'Ontime', 'Late (Salah Driver)', 'Total Reward', 'Total Sanksi', 'Net Akhir Periode'],
           rows: summaries.map(s => [
             activePeriod.label, activePeriod.payoutDeadlineLabel, s.driver.name, s.driver.transporterName,
-            s.ontimeCount, `${s.lateCount} (${s.lateDriverFaultCount})`, `${s.standardDaysOntime} hr`,
-            `+${s.totalReward}`, `-${s.totalSanction}`, s.netPeriodPoints,
+            s.ontimeCount, `${s.lateCount} (${s.lateDriverFaultCount})`,
+            formatRupiah(s.totalReward, s.totalReward > 0),
+            s.totalSanction > 0 ? `-${formatRupiah(s.totalSanction)}` : 'Rp 0',
+            formatRupiah(s.netPeriodPoints, s.netPeriodPoints > 0),
           ]),
         };
       }
