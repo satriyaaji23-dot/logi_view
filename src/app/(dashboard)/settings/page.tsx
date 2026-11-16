@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Video, MapPin, Webhook, Eye, EyeOff, Save, CheckCircle2,
-  AlertCircle, PlugZap, ShieldCheck, KeyRound,
+  AlertCircle, PlugZap, ShieldCheck, KeyRound, Database, Upload,
 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
@@ -14,8 +14,9 @@ import {
   type ApiIntegrationSettings,
   type ServerIntegrationStatus,
 } from '@/lib/integrations';
+import { testSupabaseStorage, uploadFotoDetailed } from '@/lib/supabaseClient';
 
-type ServiceKey = 'cctv' | 'gps' | 'webhook';
+type ServiceKey = 'cctv' | 'gps' | 'supabase' | 'webhook';
 
 export default function SettingsPage() {
   const { rules, updateRule, drivers, adjustPoints, auditLogs, addAudit } = useData();
@@ -32,6 +33,7 @@ export default function SettingsPage() {
   const [showTokens, setShowTokens] = useState<Record<ServiceKey, boolean>>({
     cctv: false,
     gps: false,
+    supabase: false,
     webhook: false,
   });
   const [savedMsg, setSavedMsg] = useState('');
@@ -42,6 +44,8 @@ export default function SettingsPage() {
     preview?: string;
   } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [uploadingSample, setUploadingSample] = useState(false);
+  const [samplePhotoUrl, setSamplePhotoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     setIntegrations(loadIntegrationSettings());
@@ -56,12 +60,19 @@ export default function SettingsPage() {
   }
 
   const updateService = (
-    key: ServiceKey,
+    key: 'cctv' | 'gps' | 'webhook',
     patch: Partial<ApiIntegrationSettings['cctv'] & { pollingIntervalSec?: number; longStopThresholdMinutes?: number }>
   ) => {
     setIntegrations(prev => ({
       ...prev,
       [key]: { ...prev[key], ...patch },
+    }));
+  };
+
+  const updateSupabase = (patch: Partial<ApiIntegrationSettings['supabase']>) => {
+    setIntegrations(prev => ({
+      ...prev,
+      supabase: { ...prev.supabase, ...patch },
     }));
   };
 
@@ -72,16 +83,28 @@ export default function SettingsPage() {
       'UPDATE_API',
       'integrations',
       apiTab,
-      `Konfigurasi API ${apiTab.toUpperCase()} disimpan`,
+      `Konfigurasi ${apiTab.toUpperCase()} disimpan`,
       actor
     );
-    setSavedMsg(`Konfigurasi API ${apiTab.toUpperCase()} berhasil disimpan.`);
+    setSavedMsg(`Konfigurasi ${apiTab.toUpperCase()} berhasil disimpan.`);
     setTimeout(() => setSavedMsg(''), 3500);
   };
 
   const handleTestConnection = async (service: ServiceKey) => {
     setTesting(true);
     setTestResult(null);
+    if (service === 'supabase') {
+      saveIntegrationSettings(integrations);
+      const res = await testSupabaseStorage(
+        integrations.supabase.projectUrl,
+        integrations.supabase.anonKey,
+        integrations.supabase.bucketName
+      );
+      setTestResult({ service, ok: res.ok, message: res.message, preview: res.preview });
+      setTesting(false);
+      return;
+    }
+
     const cfg = integrations[service];
     try {
       const res = await fetch('/api/integrations/test', {
@@ -113,7 +136,31 @@ export default function SettingsPage() {
     }
   };
 
-  const activeCfg = integrations[apiTab];
+  const handleTestUploadFoto = async (file?: File) => {
+    if (!file) return;
+    setUploadingSample(true);
+    setSamplePhotoUrl(null);
+    saveIntegrationSettings(integrations);
+    const res = await uploadFotoDetailed(file, 'test');
+    if (res.publicUrl) {
+      setSamplePhotoUrl(res.publicUrl);
+      setTestResult({
+        service: 'supabase',
+        ok: true,
+        message: `Foto berhasil diunggah ke bucket "${res.bucket}"!`,
+        preview: res.publicUrl,
+      });
+    } else {
+      setTestResult({
+        service: 'supabase',
+        ok: false,
+        message: res.error ?? 'Gagal mengunggah foto ke Supabase Storage.',
+      });
+    }
+    setUploadingSample(false);
+  };
+
+  const activeCfg = apiTab === 'supabase' ? null : integrations[apiTab];
   const activeEnv = serverStatus?.[apiTab];
 
   return (
@@ -146,14 +193,21 @@ export default function SettingsPage() {
         </div>
 
         {/* Service Tabs */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {[
             { key: 'cctv' as ServiceKey, label: 'API CCTV', icon: Video },
             { key: 'gps' as ServiceKey, label: 'API GPS', icon: MapPin },
+            { key: 'supabase' as ServiceKey, label: 'Supabase Storage', icon: Database },
             { key: 'webhook' as ServiceKey, label: 'API Lain / Webhook', icon: Webhook },
           ].map(t => {
             const Icon = t.icon;
-            const envReady = serverStatus?.[t.key]?.hasEnvToken || Boolean(integrations[t.key].token);
+            const envReady =
+              t.key === 'supabase'
+                ? Boolean(
+                    (serverStatus?.supabase?.hasEnvBaseUrl && serverStatus?.supabase?.hasEnvToken) ||
+                      (integrations.supabase.projectUrl && integrations.supabase.anonKey)
+                  )
+                : serverStatus?.[t.key]?.hasEnvToken || Boolean(integrations[t.key].token);
             return (
               <button
                 key={t.key}
@@ -180,119 +234,234 @@ export default function SettingsPage() {
 
         {/* Active Service Form */}
         <form onSubmit={handleSaveIntegrations} className="space-y-4 border border-gray-200 rounded-xl p-4 bg-gray-50/50">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
-              <input
-                type="checkbox"
-                checked={activeCfg.enabled}
-                onChange={e => updateService(apiTab, { enabled: e.target.checked })}
-              />
-              Aktifkan Integrasi {apiTab.toUpperCase()}
-            </label>
-            {activeEnv && (
-              <span className="text-xs text-gray-500">
-                Status Env Server:{' '}
-                {activeEnv.hasEnvToken ? (
-                  <b className="text-emerald-700">Token Terpasang ({activeEnv.tokenPreview})</b>
-                ) : (
-                  <span className="text-amber-700">Belum ada di .env</span>
+          {apiTab === 'supabase' ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={integrations.supabase.enabled}
+                    onChange={e => updateSupabase({ enabled: e.target.checked })}
+                  />
+                  Aktifkan Integrasi Supabase Storage
+                </label>
+                {serverStatus?.supabase && (
+                  <span className="text-xs text-gray-500">
+                    Status Env Server:{' '}
+                    {serverStatus.supabase.hasEnvBaseUrl && serverStatus.supabase.hasEnvToken ? (
+                      <b className="text-emerald-700">Terpasang ({serverStatus.supabase.tokenPreview})</b>
+                    ) : (
+                      <span className="text-amber-700">Belum ada di .env — isi di bawah atau di .env.local</span>
+                    )}
+                  </span>
                 )}
-              </span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <label className="block md:col-span-2">
-              <span className="text-xs font-medium text-gray-600">
-                Endpoint / Base URL {apiTab === 'cctv' ? '(mendukung {cameraId}, {plate}, {driverId}, {channel})' : ''}
-              </span>
-              <input
-                type="url"
-                value={activeCfg.baseUrl}
-                onChange={e => updateService(apiTab, { baseUrl: e.target.value })}
-                placeholder={
-                  apiTab === 'cctv'
-                    ? 'https://domain-cctv-anda.com/api/streams/{cameraId}'
-                    : apiTab === 'gps'
-                    ? 'https://domain-gps-anda.com/api/vehicles/positions'
-                    : 'https://domain-webhook-anda.com/api/notify'
-                }
-                className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1"
-              />
-            </label>
-
-            <label className="block md:col-span-2">
-              <span className="text-xs font-medium text-gray-600">
-                API Key / Bearer Token {activeEnv?.hasEnvToken ? '(kosongkan untuk memakai token server .env.local)' : ''}
-              </span>
-              <div className="relative mt-1">
-                <input
-                  type={showTokens[apiTab] ? 'text' : 'password'}
-                  value={activeCfg.token}
-                  onChange={e => updateService(apiTab, { token: e.target.value })}
-                  placeholder={
-                    activeEnv?.hasEnvToken
-                      ? `Menggunakan token server (${activeEnv.tokenPreview}) — isi jika ingin override`
-                      : 'Tempel API token / Bearer token di sini'
-                  }
-                  className="border border-gray-200 bg-white rounded-lg px-3 py-2 pr-10 w-full font-mono text-xs sm:text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowTokens(s => ({ ...s, [apiTab]: !s[apiTab] }))}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  aria-label="Tampilkan atau sembunyikan token"
-                >
-                  {showTokens[apiTab] ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
               </div>
-            </label>
 
-            <label className="block">
-              <span className="text-xs font-medium text-gray-600">Nama Header Autentikasi</span>
-              <input
-                value={activeCfg.authHeader}
-                onChange={e => updateService(apiTab, { authHeader: e.target.value })}
-                placeholder="Authorization"
-                className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1"
-              />
-            </label>
-
-            <label className="block">
-              <span className="text-xs font-medium text-gray-600">Prefix Token (mis. Bearer / Token / kosong)</span>
-              <input
-                value={activeCfg.authPrefix}
-                onChange={e => updateService(apiTab, { authPrefix: e.target.value })}
-                placeholder="Bearer"
-                className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1"
-              />
-            </label>
-
-            {apiTab === 'gps' && (
-              <>
-                <label className="block">
-                  <span className="text-xs font-medium text-gray-600">Interval Polling GPS (detik)</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium text-gray-600">
+                    Supabase Project URL (NEXT_PUBLIC_SUPABASE_URL)
+                  </span>
                   <input
-                    type="number"
-                    min={5}
-                    value={integrations.gps.pollingIntervalSec}
-                    onChange={e => updateService('gps', { pollingIntervalSec: Math.max(5, Number(e.target.value)) })}
+                    type="url"
+                    value={integrations.supabase.projectUrl}
+                    onChange={e => updateSupabase({ projectUrl: e.target.value })}
+                    placeholder="https://xxxxx.supabase.co"
                     className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1"
                   />
                 </label>
-                <label className="block">
-                  <span className="text-xs font-medium text-gray-600">Batas Berhenti Lama / Wajib RCA (menit)</span>
+
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium text-gray-600">
+                    Supabase Anon Public Key (NEXT_PUBLIC_SUPABASE_ANON_KEY)
+                  </span>
+                  <div className="relative mt-1">
+                    <input
+                      type={showTokens.supabase ? 'text' : 'password'}
+                      value={integrations.supabase.anonKey}
+                      onChange={e => updateSupabase({ anonKey: e.target.value })}
+                      placeholder={
+                        serverStatus?.supabase?.hasEnvToken
+                          ? `Menggunakan anon key server (${serverStatus.supabase.tokenPreview}) — isi jika ingin override`
+                          : 'Masukkan Anon Public Key Supabase Anda'
+                      }
+                      className="border border-gray-200 bg-white rounded-lg px-3 py-2 pr-10 w-full font-mono text-xs sm:text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowTokens(s => ({ ...s, supabase: !s.supabase }))}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      aria-label="Tampilkan atau sembunyikan key"
+                    >
+                      {showTokens.supabase ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </label>
+
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium text-gray-600">
+                    Nama Bucket Storage (default: foto-website)
+                  </span>
                   <input
-                    type="number"
-                    min={30}
-                    value={integrations.gps.longStopThresholdMinutes}
-                    onChange={e => updateService('gps', { longStopThresholdMinutes: Math.max(30, Number(e.target.value)) })}
+                    value={integrations.supabase.bucketName}
+                    onChange={e => updateSupabase({ bucketName: e.target.value })}
+                    placeholder="foto-website"
+                    className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1 font-mono text-xs sm:text-sm"
+                  />
+                </label>
+              </div>
+
+              <div className="bg-white border border-gray-200 rounded-lg p-3 space-y-2">
+                <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                  <Upload size={14} className="text-[#0f2b5b]" />
+                  Uji Upload Foto ke Bucket &quot;{integrations.supabase.bucketName || 'foto-website'}&quot;
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={uploadingSample}
+                    onChange={e => handleTestUploadFoto(e.target.files?.[0])}
+                    className="text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-[#0f2b5b] file:text-white file:text-xs file:font-medium"
+                  />
+                  {uploadingSample && <span className="text-xs text-blue-600">Mengunggah ke Supabase...</span>}
+                </div>
+                {samplePhotoUrl && (
+                  <div className="flex items-center gap-3 pt-1">
+                    <img
+                      src={samplePhotoUrl}
+                      alt="Hasil upload Supabase"
+                      className="w-16 h-16 object-cover rounded-lg border border-gray-200"
+                    />
+                    <a
+                      href={samplePhotoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-700 underline break-all"
+                    >
+                      {samplePhotoUrl}
+                    </a>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : activeCfg ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={activeCfg.enabled}
+                    onChange={e => updateService(apiTab, { enabled: e.target.checked })}
+                  />
+                  Aktifkan Integrasi {apiTab.toUpperCase()}
+                </label>
+                {activeEnv && (
+                  <span className="text-xs text-gray-500">
+                    Status Env Server:{' '}
+                    {activeEnv.hasEnvToken ? (
+                      <b className="text-emerald-700">Token Terpasang ({activeEnv.tokenPreview})</b>
+                    ) : (
+                      <span className="text-amber-700">Belum ada di .env</span>
+                    )}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium text-gray-600">
+                    Endpoint / Base URL {apiTab === 'cctv' ? '(mendukung {cameraId}, {plate}, {driverId}, {channel})' : ''}
+                  </span>
+                  <input
+                    type="url"
+                    value={activeCfg.baseUrl}
+                    onChange={e => updateService(apiTab, { baseUrl: e.target.value })}
+                    placeholder={
+                      apiTab === 'cctv'
+                        ? 'https://domain-cctv-anda.com/api/streams/{cameraId}'
+                        : apiTab === 'gps'
+                        ? 'https://domain-gps-anda.com/api/vehicles/positions'
+                        : 'https://domain-webhook-anda.com/api/notify'
+                    }
                     className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1"
                   />
                 </label>
-              </>
-            )}
-          </div>
+
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium text-gray-600">
+                    API Key / Bearer Token {activeEnv?.hasEnvToken ? '(kosongkan untuk memakai token server .env.local)' : ''}
+                  </span>
+                  <div className="relative mt-1">
+                    <input
+                      type={showTokens[apiTab] ? 'text' : 'password'}
+                      value={activeCfg.token}
+                      onChange={e => updateService(apiTab, { token: e.target.value })}
+                      placeholder={
+                        activeEnv?.hasEnvToken
+                          ? `Menggunakan token server (${activeEnv.tokenPreview}) — isi jika ingin override`
+                          : 'Tempel API token / Bearer token di sini'
+                      }
+                      className="border border-gray-200 bg-white rounded-lg px-3 py-2 pr-10 w-full font-mono text-xs sm:text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowTokens(s => ({ ...s, [apiTab]: !s[apiTab] }))}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      aria-label="Tampilkan atau sembunyikan token"
+                    >
+                      {showTokens[apiTab] ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-medium text-gray-600">Nama Header Autentikasi</span>
+                  <input
+                    value={activeCfg.authHeader}
+                    onChange={e => updateService(apiTab, { authHeader: e.target.value })}
+                    placeholder="Authorization"
+                    className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-medium text-gray-600">Prefix Token (mis. Bearer / Token / kosong)</span>
+                  <input
+                    value={activeCfg.authPrefix}
+                    onChange={e => updateService(apiTab, { authPrefix: e.target.value })}
+                    placeholder="Bearer"
+                    className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1"
+                  />
+                </label>
+
+                {apiTab === 'gps' && (
+                  <>
+                    <label className="block">
+                      <span className="text-xs font-medium text-gray-600">Interval Polling GPS (detik)</span>
+                      <input
+                        type="number"
+                        min={5}
+                        value={integrations.gps.pollingIntervalSec}
+                        onChange={e => updateService('gps', { pollingIntervalSec: Math.max(5, Number(e.target.value)) })}
+                        className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs font-medium text-gray-600">Batas Berhenti Lama / Wajib RCA (menit)</span>
+                      <input
+                        type="number"
+                        min={30}
+                        value={integrations.gps.longStopThresholdMinutes}
+                        onChange={e => updateService('gps', { longStopThresholdMinutes: Math.max(30, Number(e.target.value)) })}
+                        className="border border-gray-200 bg-white rounded-lg px-3 py-2 w-full mt-1"
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+            </>
+          ) : null}
 
           {savedMsg && (
             <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs px-3 py-2 rounded-lg flex items-center gap-2">
@@ -341,7 +510,7 @@ export default function SettingsPage() {
         <div className="bg-blue-50/70 border border-blue-100 rounded-xl p-3 text-xs text-blue-900 space-y-1">
           <p className="font-semibold">Panduan Environment Variable (Lokal `.env.local` &amp; Vercel):</p>
           <p className="font-mono text-[11px] text-blue-800">
-            CCTV_API_BASE_URL, CCTV_API_TOKEN, GPS_API_BASE_URL, GPS_API_TOKEN, WEBHOOK_API_URL, WEBHOOK_API_TOKEN
+            CCTV_API_BASE_URL, CCTV_API_TOKEN, GPS_API_BASE_URL, GPS_API_TOKEN, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_SUPABASE_BUCKET, WEBHOOK_API_URL, WEBHOOK_API_TOKEN
           </p>
         </div>
       </section>

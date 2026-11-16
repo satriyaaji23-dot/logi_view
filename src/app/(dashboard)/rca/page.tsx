@@ -1,14 +1,29 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Plus, X, Info, AlertTriangle, CheckCircle2, Video, MapPin, ShieldCheck } from 'lucide-react';
+import { Plus, X, Info, AlertTriangle, CheckCircle2, Video, MapPin, ShieldCheck, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 import {
   RCA_CATEGORY_LABELS, EXTERNAL_RCA_CATEGORIES, VERIFICATION_STATUS_COLORS, VERIFICATION_STATUS_LABELS,
   type RCACategory, type VerificationStatus, type Notification,
 } from '@/lib/types';
+import { uploadFotoDetailed } from '@/lib/supabaseClient';
 import ArmadaCctvModal from '@/components/monitoring/ArmadaCctvModal';
+
+function isImageUrl(val?: string): boolean {
+  if (!val) return false;
+  return val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:image/');
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => reject(new Error('Gagal membaca file gambar'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function RCAPage() {
   const { rcaEvents, drivers, shipments, notifications, addRCAEvent, verifyRCAEvent, addAudit } = useData();
@@ -35,6 +50,42 @@ export default function RCAPage() {
   const [vStatus, setVStatus] = useState<VerificationStatus>('sedang_diperiksa');
   const [decision, setDecision] = useState('');
   const [cctvDriverId, setCctvDriverId] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadFeedback, setUploadFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const handleEvidenceFileChange = async (file?: File) => {
+    if (!file) {
+      setForm(f => ({ ...f, evidence: '' }));
+      setUploadFeedback(null);
+      return;
+    }
+    setUploadingPhoto(true);
+    setUploadFeedback(null);
+
+    const res = await uploadFotoDetailed(file, 'rca');
+    if (res.publicUrl) {
+      setForm(f => ({ ...f, evidence: res.publicUrl ?? '' }));
+      setUploadFeedback({
+        ok: true,
+        text: `Foto berhasil diunggah ke Supabase Storage (bucket "${res.bucket}").`,
+      });
+      setUploadingPhoto(false);
+      return;
+    }
+
+    // Jika Supabase belum dikonfigurasi atau gagal, simpan pratinjau lokal sementara
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setForm(f => ({ ...f, evidence: dataUrl || file.name }));
+    } catch {
+      setForm(f => ({ ...f, evidence: file.name }));
+    }
+    setUploadFeedback({
+      ok: false,
+      text: res.error ?? 'Gagal mengunggah ke Supabase Storage. Pratinjau lokal sementara digunakan.',
+    });
+    setUploadingPhoto(false);
+  };
 
   const openFormForAlert = (alert: Notification) => {
     const mins = alert.stoppedDurationMinutes ?? 135;
@@ -97,6 +148,7 @@ export default function RCAPage() {
     );
     setShowForm(false);
     setLinkedNotifId(undefined);
+    setUploadFeedback(null);
     setForm(f => ({ ...f, shipmentId: '', location: '', duration: '', description: '', evidence: '' }));
   };
 
@@ -133,6 +185,7 @@ export default function RCAPage() {
           <button
             onClick={() => {
               setLinkedNotifId(undefined);
+              setUploadFeedback(null);
               setForm(f => ({ ...f, driverId: user?.driverId ?? '' }));
               setShowForm(true);
             }}
@@ -186,6 +239,24 @@ export default function RCAPage() {
             </div>
 
             <p className="text-xs text-gray-600 bg-gray-50 rounded-lg p-2.5">{ev.description}</p>
+
+            {ev.evidence?.[0] && (
+              <div className="pt-1">
+                {isImageUrl(ev.evidence[0]) ? (
+                  <a href={ev.evidence[0]} target="_blank" rel="noopener noreferrer" className="inline-block">
+                    <img
+                      src={ev.evidence[0]}
+                      alt={`Bukti ${ev.id}`}
+                      className="h-24 w-36 object-cover rounded-lg border border-gray-200"
+                    />
+                  </a>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-xs text-blue-700 bg-blue-50 px-2 py-1 rounded">
+                    <ImageIcon size={12} /> {ev.evidence[0]}
+                  </span>
+                )}
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
               <span>Lokasi: <b>{ev.location}</b> ({ev.duration})</span>
@@ -335,17 +406,59 @@ export default function RCAPage() {
               />
             </label>
             <label className="block text-sm">
-              Upload Foto / Bukti
-              <input type="file" accept="image/*" onChange={e => setForm({ ...form, evidence: e.target.files?.[0]?.name ?? '' })} className="border rounded-lg px-3 py-2 w-full mt-1" />
+              Upload Foto / Bukti (Supabase Storage)
+              <input
+                type="file"
+                accept="image/*"
+                disabled={uploadingPhoto}
+                onChange={e => handleEvidenceFileChange(e.target.files?.[0])}
+                className="border rounded-lg px-3 py-2 w-full mt-1"
+              />
             </label>
+            {uploadingPhoto && (
+              <p className="text-xs text-blue-700 flex items-center gap-1.5">
+                <Loader2 size={14} className="animate-spin" /> Mengunggah foto ke bucket Supabase...
+              </p>
+            )}
+            {uploadFeedback && (
+              <p className={`text-xs rounded-lg px-2.5 py-2 ${uploadFeedback.ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
+                {uploadFeedback.text}
+              </p>
+            )}
+            {isImageUrl(form.evidence) && (
+              <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg p-2.5">
+                <img
+                  src={form.evidence}
+                  alt="Preview bukti RCA"
+                  className="w-16 h-16 object-cover rounded-lg border border-gray-200 shrink-0"
+                />
+                <div className="min-w-0 text-xs">
+                  <p className="font-semibold text-gray-800">Foto Bukti Siap Dikirim</p>
+                  {form.evidence.startsWith('http') && (
+                    <a
+                      href={form.evidence}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-700 underline break-all line-clamp-2"
+                    >
+                      {form.evidence}
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
             <div className={`flex gap-2 text-xs rounded-lg p-3 ${external ? 'bg-blue-50 text-blue-800' : 'bg-amber-50 text-amber-800'}`}>
               <Info size={16} className="shrink-0" />
               {external
                 ? 'Kategori ini termasuk kendala eksternal: tidak mengurangi poin driver secara otomatis.'
                 : 'Kategori ini akan diverifikasi oleh Admin Control Tower menggunakan data GPS & CCTV armada.'}
             </div>
-            <button type="submit" className="bg-[#0f2b5b] text-white px-4 py-2.5 rounded-lg text-sm w-full font-medium">
-              Simpan &amp; Kirim RCA
+            <button
+              type="submit"
+              disabled={uploadingPhoto}
+              className="bg-[#0f2b5b] text-white px-4 py-2.5 rounded-lg text-sm w-full font-medium disabled:opacity-50"
+            >
+              {uploadingPhoto ? 'Menunggu Upload Foto...' : 'Simpan & Kirim RCA'}
             </button>
           </form>
         </div>
@@ -375,6 +488,24 @@ export default function RCAPage() {
                 </p>
               )}
               <p className="pt-1 text-gray-700"><b>Kronologi Sopir:</b> {vEvent.description}</p>
+              {vEvent.evidence?.[0] && (
+                <div className="pt-2">
+                  <p className="font-semibold text-gray-700 mb-1">Foto Bukti Lapangan:</p>
+                  {isImageUrl(vEvent.evidence[0]) ? (
+                    <a href={vEvent.evidence[0]} target="_blank" rel="noopener noreferrer" className="inline-block">
+                      <img
+                        src={vEvent.evidence[0]}
+                        alt={`Bukti ${vEvent.id}`}
+                        className="max-h-40 rounded-lg border border-gray-200 object-cover"
+                      />
+                    </a>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-blue-700 bg-blue-50 px-2 py-1 rounded">
+                      <ImageIcon size={12} /> {vEvent.evidence[0]}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg p-2.5 text-xs">

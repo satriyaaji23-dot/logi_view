@@ -6,6 +6,13 @@ export interface ServiceApiConfig {
   authPrefix: string;
 }
 
+export interface SupabaseStorageConfig {
+  enabled: boolean;
+  projectUrl: string;
+  anonKey: string;
+  bucketName: string;
+}
+
 export interface ApiIntegrationSettings {
   cctv: ServiceApiConfig;
   gps: ServiceApiConfig & {
@@ -13,6 +20,7 @@ export interface ApiIntegrationSettings {
     longStopThresholdMinutes: number;
   };
   webhook: ServiceApiConfig;
+  supabase: SupabaseStorageConfig;
 }
 
 export interface ServerIntegrationStatus {
@@ -30,6 +38,12 @@ export interface ServerIntegrationStatus {
     hasEnvToken: boolean;
     hasEnvBaseUrl: boolean;
     tokenPreview: string;
+  };
+  supabase?: {
+    hasEnvToken: boolean;
+    hasEnvBaseUrl: boolean;
+    tokenPreview: string;
+    bucketName: string;
   };
 }
 
@@ -59,6 +73,12 @@ export const DEFAULT_INTEGRATIONS: ApiIntegrationSettings = {
     authHeader: 'Authorization',
     authPrefix: 'Bearer',
   },
+  supabase: {
+    enabled: true,
+    projectUrl: '',
+    anonKey: '',
+    bucketName: 'foto-website',
+  },
 };
 
 export function loadIntegrationSettings(): ApiIntegrationSettings {
@@ -71,6 +91,7 @@ export function loadIntegrationSettings(): ApiIntegrationSettings {
       cctv: { ...DEFAULT_INTEGRATIONS.cctv, ...parsed.cctv },
       gps: { ...DEFAULT_INTEGRATIONS.gps, ...parsed.gps },
       webhook: { ...DEFAULT_INTEGRATIONS.webhook, ...parsed.webhook },
+      supabase: { ...DEFAULT_INTEGRATIONS.supabase, ...parsed.supabase },
     };
   } catch {
     return DEFAULT_INTEGRATIONS;
