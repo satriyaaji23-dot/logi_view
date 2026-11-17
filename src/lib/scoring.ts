@@ -397,6 +397,7 @@ export function evaluateShipmentsForPeriod(
   period: RewardPeriod
 ): ShipmentRewardEvaluation[] {
   return shipments
+    .filter(sh => sh.status === 'completed' || Boolean(sh.arrivalUnloadDate || sh.actualArrival))
     .map(sh => {
       const evalDate = sh.arrivalUnloadDate || sh.actualArrival || sh.sanguTransferDate || sh.departureTime;
       const { actualDays, ontimeStatus, standardDays } = evaluateShipmentOntime(sh);

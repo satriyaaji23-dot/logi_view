@@ -13,6 +13,7 @@ import {
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 import { otifDailyData, otifMonthlyData, onTimeVsLateData } from '@/lib/mock-data';
+import { formatRupiah } from '@/lib/scoring';
 import {
   DRIVER_STATUS_COLORS,
   DRIVER_STATUS_LABELS,
@@ -449,26 +450,33 @@ function DriverDashboardView() {
         </section>
       </div>
 
-      {/* Point History */}
+      {/* Point & Reward History */}
       <section className="bg-white rounded-xl border border-gray-200 p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm sm:text-base font-semibold text-gray-900">Riwayat Poin Saya</h2>
+          <h2 className="text-sm sm:text-base font-semibold text-gray-900">Riwayat Reward &amp; Sanksi Saya</h2>
           <Link href="/reward" className="text-xs font-medium text-blue-600 hover:underline">
-            Detail reward
+            Detail reward &amp; punishment
           </Link>
         </div>
         <ul className="divide-y text-sm">
-          {myPointTx.slice(0, 5).map(t => (
-            <li key={t.id} className="py-2.5 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs sm:text-sm text-gray-800 truncate">{t.reason}</p>
-                <p className="text-[11px] text-gray-400">{fmt(t.createdAt)} · {t.createdBy}</p>
-              </div>
-              <span className={`font-bold text-sm shrink-0 ${t.type === 'reward' ? 'text-green-700' : 'text-red-600'}`}>
-                {t.type === 'reward' ? `+${t.points}` : `-${t.points}`}
-              </span>
-            </li>
-          ))}
+          {myPointTx.slice(0, 6).map(t => {
+            const isRupiah = t.type === 'reward' || t.categoryType !== 'long_stop';
+            return (
+              <li key={t.id} className="py-2.5 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs sm:text-sm text-gray-800 truncate">{t.reason}</p>
+                  <p className="text-[11px] text-gray-400">{fmt(t.createdAt)} · {t.createdBy}</p>
+                </div>
+                <span className={`font-bold text-sm shrink-0 ${t.type === 'reward' ? 'text-green-700' : 'text-red-600'}`}>
+                  {isRupiah
+                    ? t.type === 'reward'
+                      ? formatRupiah(t.points, true)
+                      : `-${formatRupiah(t.points)}`
+                    : `-${t.points} poin`}
+                </span>
+              </li>
+            );
+          })}
           {!myPointTx.length && <li className="py-4 text-center text-gray-400 text-sm">Belum ada riwayat poin.</li>}
         </ul>
       </section>

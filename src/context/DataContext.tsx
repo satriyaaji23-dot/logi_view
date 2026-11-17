@@ -26,7 +26,7 @@ import type { RealtimeEnvelope, SharedDataPayload } from '@/lib/realtimeStore';
 
 const LONG_STOP_THRESHOLD_MINUTES = 120; // > 2 jam
 const RCA_DEADLINE_MS = 30 * 60 * 1000; // 30 menit batas waktu isi RCA
-const REALTIME_STORAGE_KEY = 'silog_shared_state_v2';
+const REALTIME_STORAGE_KEY = 'silog_shared_state_v3';
 const REALTIME_CHANNEL_NAME = 'silog_realtime_v1';
 
 export type RealtimeStatus = 'connecting' | 'connected' | 'local';
